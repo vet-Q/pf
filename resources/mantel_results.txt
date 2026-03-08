@@ -1,0 +1,52 @@
+Mantel: genetic vs country
+
+Mantel statistic based on Pearson's product-moment correlation 
+
+Call:
+mantel(xdis = genetic_dist, ydis = country_dist, permutations = N_PERM) 
+
+Mantel statistic r: 0.008335 
+      Significance: 0.185 
+
+Upper quantiles of permutations (null model):
+   90%    95%  97.5%    99% 
+0.0113 0.0147 0.0175 0.0196 
+Permutation: free
+Number of permutations: 999
+
+
+Mantel: genetic vs year
+
+Mantel statistic based on Pearson's product-moment correlation 
+
+Call:
+mantel(xdis = genetic_dist, ydis = year_dist, permutations = N_PERM) 
+
+Mantel statistic r: -0.04797 
+      Significance: 0.967 
+
+Upper quantiles of permutations (null model):
+   90%    95%  97.5%    99% 
+0.0346 0.0435 0.0532 0.0595 
+Permutation: free
+Number of permutations: 999
+
+
+Partial Mantel: year | country
+
+Partial Mantel statistic based on Pearson's product-moment correlation 
+
+Call:
+mantel.partial(xdis = genetic_dist, ydis = year_dist, zdis = country_dist,      permutations = N_PERM) 
+
+Mantel statistic r: -0.04809 
+      Significance: 0.966 
+
+Upper quantiles of permutations (null model):
+   90%    95%  97.5%    99% 
+0.0353 0.0451 0.0545 0.0632 
+Permutation: free
+Number of permutations: 999
+
+
+Clade-country permutation p = 0 

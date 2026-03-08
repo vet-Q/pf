@@ -1,0 +1,100 @@
+# Raw Data & Sequencing Files
+*.bam
+*.bai
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+
+# Output VCF & BCF Files
+*.vcf
+*.vcf.gz
+*.bcf
+*.bcf.gz
+*.vcf.gz.tbi
+*.vcf.gz.csi
+
+# Variant Call Format Indices
+*.vcf.idx
+*.bcf.idx
+
+# Consensus & Assembly Outputs
+*.consensus.fasta
+*.consensus.fa
+*.fasta.idx
+
+# Analysis Results Directory (Large)
+data/
+results/
+output/
+outputs/
+
+# Nextflow Work Directory
+.nextflow/
+work/
+.nextflow.log*
+
+# Docker/Container Cache
+.docker-cache/
+.singularity-cache/
+docker-images/
+
+# Conda Environment Cache
+.conda-cache/
+.conda/
+envs/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# R Files
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# Temporary Files
+*.tmp
+*.temp
+*.log
+*.pid
+*.sam
+
+# OS-specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+desktop.ini

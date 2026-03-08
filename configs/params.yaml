@@ -1,0 +1,71 @@
+# ===================================================================
+# Plasmodium falciparum Pipeline - Parameter Configuration
+# 
+# 이 파일을 수정하여 각 실행마다 설정을 변경하세요
+# Modify this file for each run instead of editing main.nf
+# ===================================================================
+
+# ==================== DATA PATHS ====================
+# data 폴더 기준 상대 경로 또는 절대 경로
+paths:
+  # 입력 BAM 파일 경로 (이미 정렬된 BAM)
+  bam_root: "../data/result/03_pf_mapping/mapped_pf"
+  bam_glob: "*.bam"
+  
+  # 또는 FASTQ에서 정렬까지 진행하는 경우
+  fastq_root: "../data"
+  fastq_glob: "barcode*/*.fastq.gz"
+  
+  # 출력 디렉토리
+  outdir: "../data/result/analysis_output"
+
+# ==================== REFERENCE FILES ====================
+references:
+  bed: "amplicons.bed"
+  ref: "PlasmoDB-67_Pfalciparum3D7_Genome.fasta"
+
+# ==================== ANALYSIS TOGGLES ====================
+# true/false로 각 분석 단계 활성화/비활성화
+pipeline:
+  do_fastqc: false          # FastQ 품질 관리
+  do_alignment: false       # minimap2 정렬 (FASTQ 입력 필요)
+  do_depth: true            # 깊이 분석
+  do_ivar: true             # iVar consensus 생성
+  do_gene_bins: true        # 유전자별 깊이 분석
+  do_variants: true         # 변이 호출
+  do_multipanel: false      # 다중 패널 플롯
+  do_gene_1x8: false        # 1x8 유전자 플롯
+  do_afdp: true             # AF/DP 피규어
+
+# ==================== IVAR CONSENSUS PARAMETERS ====================
+ivar:
+  threshold: 0.6            # 합의 스레시홀드
+  min_cons_cov: 10          # 최소 커버리지
+  min_var_cov: 1            # 최소 변이 커버리지
+  genes: "CRT DHFR DHPS K13 MDR1 MSP2 PMI PMIII"
+
+# ==================== MINIMAP2 ALIGNMENT PARAMETERS ====================
+minimap2:
+  preset: "sr"              # "sr" (단문제), "map-pb" (PacBio), "map-ont" (Nanopore), "asm5"
+  threads: 4
+
+# ==================== BCFTOOLS VARIANT CALLING PARAMETERS ====================
+bcftools:
+  mode: "mv"                # "m" = multiallelic, "v" = vcf_outputs
+  snp_only: true            # SNP만 추출
+  threads: 4
+  max_depth: 10000
+
+# ==================== AF/DP FIGURE PARAMETERS ====================
+afdp_figures:
+  min_depth: 15
+  af_threshold: 0.50
+  shade_xmin: 0.48
+  shade_xmax: 0.52
+
+# ==================== COMPUTATIONAL RESOURCES ====================
+# 요청 리소스
+resources:
+  max_cpus: 32
+  max_memory: "128.GB"
+  max_time: "240.h"
