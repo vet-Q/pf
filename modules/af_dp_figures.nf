@@ -23,8 +23,8 @@ process AF_DP_FIGURES {
     --out_fig1 Figure1_by_gene.pdf \
     --out_fig2 Figure2_overall.pdf \
     --genes "${params.genes.tokenize(' ').join(',')}" \
-    --min_dp ${params.afdp_min_dp} \
-    --af_cut ${params.afdp_af_cut} \
+    --min_dp ${params.afdp_min_depth} \
+    --af_cut ${params.afdp_af_threshold} \
     --shade_xmin ${params.afdp_shade_xmin} \
     --shade_xmax ${params.afdp_shade_xmax}
   """

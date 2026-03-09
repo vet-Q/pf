@@ -1,695 +1,326 @@
-# Plasmodium falciparum (Pf) Analysis Pipeline
+# Plasmodium falciparum (Pf) 분석 파이프라인
 
-A comprehensive Nextflow-based pipeline for analyzing Plasmodium falciparum genomic data. This pipeline processes raw FASTQ files or pre-aligned BAM files to identify variants, generate consensus sequences, analyze coverage depths, and produce publication-ready visualizations focused on drug-resistance genes.
+Nanopore 시퀀싱으로 생성된 _Plasmodium falciparum_ FASTQ 데이터를 정렬(alignment)부터 변이 호출(variant calling), 합의 서열(consensus), 커버리지 분석, 시각화까지 한 번에 처리하는 **Nextflow 기반 파이프라인**입니다.
 
-## 🚀 빠른 시작 (5분)
+---
 
-**복잡함이 없이 시작하고 싶으신가요?**
+## 📁 프로젝트 구조
 
-👉 **[SIMPLE_START.md](SIMPLE_START.md)** ← 여기부터 시작하세요!
-
-간단한 3단계만으로 끝납니다:
-1. D:\input 폴더 만들기 + FASTQ 파일 넣기
-2. `run.bat D:\input D:\output conda` 실행하기
-3. 결과 확인 (D:\output)
-
-**CMD/PowerShell 창에서 한줄이면 끝:**
-```cmd
-cd C:\Users\kwono\OneDrive\문서\python project\pfNextflow
-run.bat D:\input D:\output conda
+```
+pf/
+├── main.nf                  ← 메인 파이프라인 스크립트
+├── nextflow.config          ← 모든 파라미터 기본값 + 실행 프로파일
+├── run.sh                   ← 한 줄 실행 스크립트
+├── setup.sh                 ← 환경 점검 스크립트
+│
+├── configs/
+│   └── params.yaml          ← (참고용) 파라미터 설명 파일
+│
+├── data/                    ← 📂 입력 데이터 (barcode별 FASTQ)
+│   ├── barcode01/
+│   │   ├── *.fastq.gz
+│   │   └── ...
+│   ├── barcode02/
+│   └── ... (barcode24까지)
+│
+├── resources/               ← 참조 파일
+│   ├── PlasmoDB-67_Pfalciparum3D7_Genome.fasta   ← 레퍼런스 게놈
+│   ├── PlasmoDB-67_Pfalciparum3D7_Genome.fasta.fai
+│   └── amplicons.bed        ← 유전자 좌표 (CRT, DHFR, ...)
+│
+├── modules/                 ← Nextflow 모듈 (각 분석 단계)
+│   ├── minimap2_align.nf    ← FASTQ → BAM 정렬
+│   ├── pf_depth.nf          ← 깊이 분석
+│   ├── ivar_consensus.nf    ← 합의 서열 생성
+│   ├── call_variants.nf     ← bcftools 변이 호출
+│   ├── gene_bins_nf.nf      ← 유전자별 read-length bin 분석
+│   ├── gene_bins_plot_nf.nf ← 멀티패널 플롯
+│   ├── gene_1to8_plot.nf    ← 1×8 유전자 플롯
+│   ├── af_dp_figures.nf     ← AF/DP 산점도 피규어
+│   └── fastq_qc.nf          ← FastQC 품질 관리
+│
+├── bin/                     ← 헬퍼 스크립트 (Shell + R)
+│   ├── call_bcftools.sh
+│   ├── call_ivar.sh
+│   ├── make_consensus_bcftools.sh
+│   ├── make_consensus_ivar.sh
+│   ├── make_af_dp_figures.R
+│   ├── plot_depth_per_gene.R
+│   ├── plot_gene_multipanel.R
+│   └── plot_gene_1x8.R
+│
+└── results/                 ← 📂 출력 결과 (자동 생성)
+    ├── alignment/minimap2/  ← 정렬된 BAM 파일
+    ├── pf_depth/            ← 깊이 분석 결과
+    ├── calling/ivar/        ← iVar 합의 서열 + 변이
+    ├── calling/bcftools/    ← bcftools VCF 파일
+    ├── gene_bins/           ← 유전자별 bin 분석
+    ├── figures/afdp/        ← AF/DP 피규어
+    └── pipeline_info/       ← Nextflow 실행 리포트
 ```
 
 ---
 
-## Key Features
+## 🔧 사전 요구사항
 
-✅ **Complete from raw reads**: FASTQ QC → Alignment → Variant calling → Visualization
-✅ **Docker-based (Offline capable)**: All tools containerized, runs without external dependencies
-✅ **Flexible input**: Accept both raw FASTQ and pre-aligned BAM files
-✅ **Drug-resistance profiling**: Focused analysis on key Pf resistance genes
-✅ **Publication-ready plots**: Comprehensive gene-level visualizations
+### 필수 소프트웨어
 
-## Overview
+| 도구 | 용도 | 설치 확인 |
+|------|------|-----------|
+| **Java** 11+ | Nextflow 실행 | `java -version` |
+| **Nextflow** ≥ 22.0 | 파이프라인 엔진 | `nextflow -version` |
+| **samtools** | BAM 처리 / 인덱싱 | `samtools --version` |
+| **minimap2** | FASTQ → BAM 정렬 | `minimap2 --version` |
+| **bcftools** | 변이 호출 (VCF) | `bcftools --version` |
+| **ivar** | 합의 서열 생성 | `ivar version` |
+| **Rscript** ≥ 4.0 | 시각화 (ggplot2 등) | `Rscript --version` |
 
-This pipeline is designed for research groups analyzing Pf samples, particularly those interested in:
-- **FastQ quality assessment** using FastQC
-- **Read alignment** from fastq files using minimap2 (supports PacBio, Nanopore, short reads)
-- **Variant calling** from aligned sequencing data with bcftools
-- **Consensus sequence** generation using iVar
-- **Coverage depth analysis** across gene regions
-- **Gene-specific visualizations** including allele frequency and depth plots
-- **Drug-resistance gene profiling** (CRT, DHFR, DHPS, K13, MDR1, MSP2, PMI, PMIII)
+### 설치 방법 (Ubuntu/Debian)
 
-## Requirements
-
-### System Requirements
-- **Nextflow** >= 22.0
-- **Docker** (recommended for offline operation) OR **Conda** (for local environment)
-- **Disk space** >= 100GB (for typical multi-sample analyses)
-- **RAM** >= 16GB (configurable)
-
-### Option A: Docker (RECOMMENDED - Offline Capable)
-All bioinformatics tools are containerized and managed by Nextflow automatically.
 ```bash
-# Install Docker Desktop
-# macOS/Windows: https://www.docker.com/products/docker-desktop
-# Linux: sudo apt-get install docker.io (or your package manager equivalent)
+# Java
+sudo apt install default-jdk
 
-# Verify installation
-docker --version
-```
-
-### Option B: Conda (Alternative)
-For local installation without Docker:
-```bash
-# Install Miniconda
-# https://docs.conda.io/projects/conda/en/latest/user-guide/install/
-
-# Verify installation
-conda --version
-```
-
-### Bioinformatics Tools (Managed Automatically)
-The pipeline relies on the following tools (all automatically managed):
-- `fastqc` - FastQ quality control
-- `minimap2` - Long-read and short-read alignment
-- `samtools` - BAM file processing
-- `bcftools` - Variant calling and VCF manipulation
-- `iVar` - Consensus sequence generation
-- `bedtools` - Genomic region operations
-- `R` (>= 4.0) - Visualization and statistical analysis
-
-## Installation
-
-### 1. Clone the Repository
-```bash
-git clone https://github.com/yourusername/pfNextflow.git
-cd pfNextflow
-```
-
-### 2. Install Nextflow
-```bash
-# Using curl
+# Nextflow
 curl -s https://get.nextflow.io | bash
 chmod +x nextflow
+sudo mv nextflow /usr/local/bin/
 
-# Or using Homebrew (macOS/Linux)
-brew install nextflow
+# 생물정보학 도구 (conda 추천)
+conda install -c bioconda samtools minimap2 bcftools ivar
+
+# R 패키지 (R 콘솔에서)
+# install.packages(c("ggplot2", "dplyr", "patchwork", "stringr", "purrr", "optparse"))
+# BiocManager::install("vcfR")
 ```
 
-### 3. Verify Installation
+### 환경 점검
+
 ```bash
-./nextflow version
+./setup.sh
 ```
 
-## Quick Start
+이 명령으로 모든 도구가 설치되어 있는지 한눈에 확인할 수 있습니다.
 
-### Basic Usage
+---
+
+## 🚀 실행 방법
+
+### 방법 1: run.sh 스크립트 (가장 간단)
 
 ```bash
-# Run with default parameters (requires input BAM files)
-nextflow run main.nf \
-  --bam_root /path/to/bam/directory \
-  --outdir /path/to/output \
-  -profile docker
-
-# Run with custom gene list
-nextflow run main.nf \
-  --bam_root /path/to/bam/directory \
-  --outdir /path/to/output \
-  --genes "CRT DHFR K13 MDR1" \
-  -profile docker
+cd /mnt/disk1/NGS/Plasmodium_falciparum/analysis/pf
+./run.sh
 ```
 
-### Example: Running All Analyses
+### 방법 2: Nextflow 직접 실행
+
 ```bash
-nextflow run main.nf \
-  --bam_root /data/bams \
-  --outdir /data/results \
-  --do_depth true \
-  --do_ivar true \
-  --do_variants true \
-  --do_multipanel true \
-  --do_gene_1x8 true \
-  --do_afdp true \
-  -profile docker
+cd /mnt/disk1/NGS/Plasmodium_falciparum/analysis/pf
+nextflow run main.nf -profile standard
 ```
 
-### Example: From Raw FASTQ Files
+### 방법 3: 파라미터 오버라이드
+
 ```bash
-nextflow run main.nf \
-  --fastq_root /data/fastq \
-  --outdir /data/results \
-  --do_fastqc true \
+# 예) 정렬만 실행
+nextflow run main.nf -profile standard \
   --do_alignment true \
-  --minimap2_preset "sr" \
-  --do_variants true \
-  --do_afdp true \
-  -profile docker
+  --do_depth false \
+  --do_ivar false \
+  --do_variants false \
+  --do_afdp false
+
+# 예) 이미 정렬된 BAM에서 시작
+nextflow run main.nf -profile standard \
+  --do_alignment false \
+  --bam_root /path/to/bam/files \
+  --bam_glob "*.sorted.bam"
+
+# 예) 특정 유전자만 분석
+nextflow run main.nf -profile standard \
+  --genes "CRT K13 MDR1"
 ```
 
-### Example: Nanopore Long Reads
-```bash
-nextflow run main.nf \
-  --fastq_root /data/fastq \
-  --outdir /data/results \
-  --do_fastqc true \
-  --do_alignment true \
-  --minimap2_preset "map-ont" \
-  --do_variants true \
-  -profile docker
+---
+
+## ⚙️ 파이프라인 단계 설명
+
+파이프라인은 아래 순서로 실행됩니다. 각 단계는 `nextflow.config`에서 on/off 가능합니다.
+
+```
+FASTQ 입력 (data/barcode*/*.fastq.gz)
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ ① MINIMAP2_ALIGN (do_alignment)     │  FASTQ → 정렬된 BAM
+│    preset: map-ont (Nanopore)       │
+└─────────────────────────────────────┘
+    │
+    ▼  BAM 파일
+    ├──────────────────────┬───────────────────┬─────────────────────┐
+    ▼                      ▼                   ▼                     ▼
+┌──────────┐       ┌──────────────┐   ┌──────────────┐     ┌──────────────┐
+│ ② 깊이   │       │ ③ iVar       │   │ ④ 유전자별   │     │ ⑤ bcftools   │
+│  분석     │       │  합의서열    │   │  bin 분석    │     │  변이호출    │
+│(do_depth)│       │ (do_ivar)    │   │(do_gene_bins)│     │(do_variants) │
+└──────────┘       └──────────────┘   └──────┬───────┘     └──────┬───────┘
+                                              │                    │
+                                              ▼                    ▼
+                                     ┌──────────────┐     ┌──────────────┐
+                                     │ 멀티패널 플롯 │     │ ⑥ AF/DP     │
+                                     │(do_multipanel)│     │  피규어     │
+                                     └──────────────┘     │ (do_afdp)   │
+                                                          └──────────────┘
 ```
 
-## Docker Offline Usage
+### 각 단계 상세
 
-### Pre-download Docker Images (Offline Capability)
-```bash
-# Pull all required images to local disk
-docker pull biocontainers/fastqc:v0.12.1-1-deb_cv1
-docker pull biocontainers/minimap2:v2.24-1-deb_cv1
-docker pull biocontainers/bcftools:v1.17-1-deb_cv1
-docker pull biocontainers/bedtools:v2.31.0-1-deb_cv1
-docker pull andersenlabapps/ivar:latest
-docker pull rocker/r-base:4.3.1
-docker pull biocontainers/samtools:latest
+| 단계 | 파라미터 | 설명 |
+|------|----------|------|
+| **① 정렬** | `do_alignment: true` | minimap2로 FASTQ를 레퍼런스에 정렬하여 BAM 생성 |
+| **② 깊이 분석** | `do_depth: true` | amplicon 영역의 position별 시퀀싱 깊이를 계산하고 유전자별 플롯 생성 |
+| **③ iVar 합의서열** | `do_ivar: true` | 유전자별 합의 서열(consensus FASTA)과 변이(TSV) 생성 |
+| **④ 유전자 bin 분석** | `do_gene_bins: true` | Read 길이를 0-1k, 1-2k, 2-3k, 3-4k, 4k+ 구간으로 분류하여 깊이 분석 |
+| **⑤ 변이 호출** | `do_variants: true` | bcftools로 SNP 호출 → VCF.gz 생성 + bcftools consensus |
+| **⑥ AF/DP 피규어** | `do_afdp: true` | 모든 유전자의 Allele Frequency vs Depth 산점도/히스토그램 생성 |
 
-# Save to tar files for transfer
-mkdir -p docker-images
-docker save biocontainers/fastqc:v0.12.1-1-deb_cv1 | gzip > docker-images/fastqc.tar.gz
-docker save biocontainers/minimap2:v2.24-1-deb_cv1 | gzip > docker-images/minimap2.tar.gz
-# ... repeat for all images
-```
+---
 
-### Load Pre-downloaded Images on Offline Machine
-```bash
-# Load all images
-for file in docker-images/*.tar.gz; do
-    docker load < "$file"
-done
+## ⚙️ 주요 파라미터 (nextflow.config)
 
-# Verify images are loaded
-docker images
-```
+모든 파라미터는 `nextflow.config`의 `params {}` 블록에 정의되어 있습니다.
 
-### Run Pipeline Offline
-```bash
-nextflow run main.nf \
-  --fastq_root /data/fastq \
-  --outdir /data/results \
-  --do_fastqc true \
-  --do_alignment true \
-  --do_variants true \
-  -profile docker \
-  -offline
-```
+### 경로 설정
 
-## Pipeline Parameters
+| 파라미터 | 기본값 | 설명 |
+|----------|--------|------|
+| `fastq_root` | `${projectDir}/data` | FASTQ 파일이 있는 루트 디렉토리 |
+| `fastq_glob` | `barcode*/*.fastq.gz` | FASTQ 파일 패턴 |
+| `bam_root` | `${projectDir}/results/alignment/minimap2` | BAM 파일 경로 (정렬 건너뛸 때) |
+| `outdir` | `${projectDir}/results` | 결과 출력 디렉토리 |
 
-### Input Parameters
+### 분석 도구 설정
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `bam_root` | `.` | Root directory for BAM files (when not aligning) |
-| `bam_glob` | `merge/nomadic/minknow/barcodes/*/bams/*.Pf3D7.final.sorted.bam` | Glob pattern to find BAM files |
-| `fastq_root` | `.` | Root directory for FASTQ files (for alignment) |
-| `fastq_glob` | `**/*.{fastq,fq,fastq.gz,fq.gz}` | Glob pattern to find FASTQ files |
-| `bed` | `resources/amplicons.bed` | BED file with amplicon coordinates |
-| `ref` | `resources/PlasmoDB-67_Pfalciparum3D7_Genome.fasta` | Reference genome FASTA |
-| `outdir` | `../data/results/expX` | Output directory path |
-| `genes` | `CRT DHFR DHPS K13 MDR1 MSP2 PMI PMIII` | Space-separated gene names for analysis |
+| 파라미터 | 기본값 | 설명 |
+|----------|--------|------|
+| `minimap2_preset` | `map-ont` | 정렬 프리셋 (`map-ont`=Nanopore, `sr`=short reads, `map-pb`=PacBio) |
+| `genes` | `CRT DHFR DHPS K13 MDR1 MSP2 PMI PMIII` | 분석 대상 약제내성 유전자 |
+| `ivar_threshold` | `0.6` | iVar 합의서열 생성 빈도 임계값 |
+| `snp_only` | `true` | SNP만 호출할지 여부 |
+| `max_depth` | `10000` | bcftools mpileup 최대 깊이 |
 
-### FastQ Quality Control & Alignment
+### 파이프라인 토글 (on/off)
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `do_fastqc` | `false` | Run FastQC quality assessment on raw reads |
-| `do_alignment` | `false` | Perform read alignment using minimap2 |
-| `minimap2_preset` | `sr` | Alignment preset: "sr" (short reads), "map-pb" (PacBio), "map-ont" (Nanopore), "asm5" (assembly) |
-| `minimap2_threads` | `4` | Number of threads for minimap2 |
+| 파라미터 | 기본값 | 설명 |
+|----------|--------|------|
+| `do_alignment` | `true` | FASTQ → BAM 정렬 수행 |
+| `do_depth` | `true` | 깊이 분석 |
+| `do_ivar` | `true` | iVar 합의서열 생성 |
+| `do_gene_bins` | `true` | 유전자별 read-length bin 분석 |
+| `do_variants` | `true` | bcftools 변이 호출 |
+| `do_afdp` | `true` | AF/DP 피규어 생성 |
+| `do_fastqc` | `false` | FastQC 품질 보고서 |
+| `do_multipanel` | `false` | 멀티패널 플롯 |
+| `do_gene_1x8` | `false` | 1×8 유전자 플롯 |
 
-### iVar Consensus Generation
+---
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `ivar_threshold` | `0.6` | Minimum allele frequency threshold (0-1) |
-| `ivar_min_cons_cov` | `10` | Minimum depth for consensus calling |
-| `ivar_min_var_cov` | `1` | Minimum depth for variant calling |
-
-### Variant Calling (bcftools)
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `variant_method` | `bcftools` | Variant calling method |
-| `bcftools_mode` | `mv` | bcftools mode ("m"=multiallelic, "v"=vcf_outputs) |
-| `snp_only` | `true` | Only report SNPs (exclude indels) |
-| `bcftools_threads` | `4` | Number of threads for bcftools |
-| `max_depth` | `10000` | Maximum depth threshold (filters high-depth regions) |
-
-### AF/DP Figure Generation
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `afdp_min_depth` | `15` | Minimum depth for plotting |
-| `afdp_af_threshold` | `0.50` | Allele frequency threshold (0-1) |
-| `afdp_shade_xmin` | `0.48` | Shading region minimum (x-axis) |
-| `afdp_shade_xmax` | `0.52` | Shading region maximum (x-axis) |
-
-### Analysis Toggles (Enable/Disable)
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `do_fastqc` | `false` | Perform quality assessment on raw reads |
-| `do_alignment` | `false` | Align reads using minimap2 (requires FASTQ input) |
-| `do_depth` | `false` | Run depth analysis |
-| `do_ivar` | `false` | Generate consensus sequences |
-| `do_gene_bins` | `false` | Calculate gene bin depth (required for plots) |
-| `do_variants` | `false` | Call variants with bcftools |
-| `do_multipanel` | `false` | Generate multipanel gene plots |
-| `do_gene_1x8` | `false` | Generate 1x8 gene comparison plots |
-| `do_afdp` | `true` | Generate AF/DP figures |
-
-## Output Structure
+## 📊 출력 결과
 
 ```
 results/
-├── qc/
-│   └── fastqc/
-│       ├── sample1_fastqc.html
-│       ├── sample1_fastqc.zip
-│       └── ...
-├── alignment/
-│   └── minimap2/
-│       ├── sample1.Pf3D7.sorted.bam
-│       ├── sample1.Pf3D7.sorted.bam.bai
-│       ├── sample1.minimap2.sam
-│       └── ...
-├── depth/
-│   ├── sample1/
-│   │   └── depth_plots.pdf
-│   └── sample2/
-│       └── depth_plots.pdf
-├── consensus/
-│   ├── sample1.consensus.fasta
-│   └── sample2.consensus.fasta
-├── calling/
-│   └── bcftools/
-│       ├── sample1.vcf.gz
-│       ├── sample1.vcf.gz.tbi
-│       └── ...
-├── gene_bins/
-│   └── gene_bin_depth_data.csv
-├── gene_plots/
-│   ├── multipanel_genes.pdf
-│   └── gene_1x8_comparison.pdf
-├── afdp_figures/
-│   └── allele_freq_depth.pdf
-└── pipeline_info/
-    ├── execution_timeline_*.html
-    ├── execution_report_*.html
-    ├── execution_trace_*.txt
-    └── pipeline_dag_*.pdf
-```
-
-## Advanced Usage
-
-### Execution Profiles
-
-```bash
-# Docker (RECOMMENDED - all tools containerized, offline capable)
-nextflow run main.nf -profile docker
-
-# Conda (local installation, requires all tools installed)
-nextflow run main.nf -profile conda
-
-# SLURM HPC Cluster
-nextflow run main.nf -profile slurm
-
-# Singularity (alternative to Docker)
-nextflow run main.nf -profile singularity
-
-# Local development/testing
-nextflow run main.nf -profile local
-```
-
-### Running with Conda Profiles
-```bash
-nextflow run main.nf \
-  --fastq_root /data/fastq \
-  --outdir /data/results \
-  --do_fastqc true \
-  --do_alignment true \
-  -profile conda
-```
-
-### Resuming Failed Runs
-```bash
-nextflow run main.nf \
-  --fastq_root /data/fastq \
-  --outdir /data/results \
-  -resume
-```
-
-### Custom Reference Files
-```bash
-nextflow run main.nf \
-  --fastq_root /data/fastq \
-  --ref /custom/path/reference.fasta \
-  --bed /custom/path/amplicons.bed \
-  --outdir /data/results \
-  -profile docker
-```
-
-### Parallel Execution with Reporting
-```bash
-nextflow run main.nf \
-  --fastq_root /data/fastq \
-  --outdir /data/results \
-  -profile docker \
-  -with-timeline timeline.html \
-  -with-report report.html \
-  -with-trace trace.txt
-```
-
-### Running with Custom Resource Limits
-```bash
-nextflow run main.nf \
-  --fastq_root /data/fastq \
-  --outdir /data/results \
-  --max_cpus 16 \
-  --max_memory 64.GB \
-  -profile docker
-```
-
-## Project Structure
-
-```
-pfNextflow/
-├── main.nf                          # Main workflow
-├── nextflow.config                  # Nextflow configuration (Docker, Conda, profiles)
-├── modules/                         # Analysis modules
-│   ├── fastq_qc.nf                  # FastQC quality assessment
-│   ├── minimap2_align.nf            # Read alignment (minimap2)
-│   ├── pf_depth.nf                  # Depth analysis
-│   ├── ivar_consensus.nf            # Consensus generation
-│   ├── call_variants.nf             # Variant calling
-│   ├── gene_bins_nf.nf              # Gene bin depth
-│   ├── gene_bins_plot_nf.nf         # Multipanel plots
-│   ├── gene_1to8_plot.nf            # 1x8 comparison
-│   └── af_dp_figures.nf             # AF/DP visualizations
-├── environments/                    # Conda environment specs
-│   ├── default.yaml                 # Default environment (all tools)
-│   ├── fastqc.yaml                  # FastQC environment
-│   ├── minimap2.yaml                # Minimap2 + samtools
-│   ├── ivar.yaml                    # iVar environment
-│   ├── bcftools.yaml                # bcftools environment
-│   └── r-analysis.yaml              # R visualization environment
-├── bin/                             # Helper scripts
-│   ├── call_bcftools.sh             # bcftools wrapper
-│   ├── call_ivar.sh                 # iVar wrapper
-│   ├── make_consensus_*.sh          # Consensus generation
-│   ├── make_af_dp_figures.R         # R visualization
-│   ├── plot_depth_*.R               # Depth plotting
-│   └── plot_gene_*.R                # Gene-level plots
-├── resources/                       # Reference files
-│   ├── amplicons.bed                # Gene amplicon regions
-│   ├── PlasmoDB-67_Pfalciparum3D7_Genome.fasta  # Reference genome
-│   ├── metadata_country.csv         # Sample metadata
+├── alignment/minimap2/
+│   ├── barcode01.Pf3D7.sorted.bam     ← 정렬된 BAM
+│   ├── barcode02.Pf3D7.sorted.bam
 │   └── ...
-├── .gitignore                       # Git ignore patterns
-├── README.md                        # This file
-└── test.sh                          # Testing script
+│
+├── pf_depth/
+│   └── barcode01/
+│       ├── all_amplicons.depth.txt     ← 전체 amplicon 깊이
+│       ├── depth_by_gene/              ← 유전자별 깊이 텍스트
+│       │   ├── CRT_depth.txt
+│       │   └── ...
+│       └── plots_by_gene/              ← 유전자별 깊이 플롯 (PDF)
+│           ├── CRT_depth.pdf
+│           └── ...
+│
+├── calling/ivar/
+│   └── barcode01/
+│       └── CRT/
+│           ├── barcode01.CRT.ivar.consensus.fasta  ← 합의 서열
+│           ├── barcode01_CRT_ivar.all.tsv           ← 모든 변이
+│           ├── barcode01_CRT_ivar.snp.tsv           ← SNP만
+│           └── depth.tsv                            ← position별 깊이
+│
+├── calling/bcftools/
+│   └── barcode01/
+│       └── CRT/
+│           ├── barcode01.CRT.bcftools.vcf.gz       ← VCF 파일
+│           ├── barcode01.CRT.bcftools.consensus.fasta
+│           └── region.bed
+│
+├── gene_bins/
+│   └── barcode01/
+│       └── CRT/
+│           ├── bin_0-1k.bam           ← 길이별 BAM
+│           ├── bin_0-1k_depth.txt     ← 길이별 깊이
+│           └── readlen.txt            ← read 길이 분포
+│
+├── figures/afdp/
+│   ├── Figure1_by_gene.pdf            ← 유전자별 AF vs DP 산점도
+│   └── Figure2_overall.pdf            ← 전체 AF vs DP 산점도
+│
+└── pipeline_info/
+    ├── report.html                    ← Nextflow 실행 리포트
+    └── timeline.html                  ← 실행 시간 타임라인
 ```
-
-## Data Preparation
-
-### Input Requirements
-1. **BAM files** must be:
-   - Aligned to Pf3D7 reference genome
-   - Sorted by coordinate
-   - Indexed (.bai files present)
-   - Named with pattern: `*.Pf3D7.final.sorted.bam`
-
-2. **Reference files** (included):
-   - BED file with amplicon coordinates
-   - Pf3D7 reference genome FASTA
-
-### Creating Index Files
-```bash
-# Index BAM files if needed
-samtools index sample.sorted.bam
-
-# Index reference FASTA if needed
-samtools faidx reference.fasta
-```
-
-## Troubleshooting
-
-### Common Issues
-
-#### Issue: "No FASTQ files found"
-```bash
-# Check that FASTQ files exist and match the glob pattern
-ls -la /your/fastq/root/**/*.fastq.gz
-
-# Update parameters for custom structure
-nextflow run main.nf --fastq_root /actual/path --fastq_glob "*.fastq.gz"
-```
-
-#### Issue: Docker daemon not running
-```bash
-# Start Docker Desktop or Docker daemon
-# macOS: Open Docker app from Applications
-# Linux: sudo systemctl start docker
-# Windows: Start Docker Desktop
-
-# Verify Docker is running
-docker ps
-```
-
-#### Issue: Docker image download fails (Network issue)
-```bash
-# Use offline mode with pre-downloaded images
-nextflow run main.nf -offline -profile docker
-
-# Or load images directly
-docker load < docker-images/fastqc.tar.gz
-```
-
-#### Issue: Permission denied in work directory
-```bash
-# Check work directory permissions
-chmod -R u+w work/
-nextflow clean -f
-```
-
-#### Issue: Out of memory during alignment
-```bash
-# Run with reduced resources
-nextflow run main.nf \
-  --fastq_root /data/fastq \
-  --minimap2_threads 2 \
-  --max_memory 8.GB \
-  -profile docker
-```
-
-#### Issue: "No BAM files found" (for BAM input)
-```bash
-# Check that BAM files exist and match pattern
-ls -la /your/bam/root/merge/nomadic/minknow/barcodes/*/bams/*.Pf3D7.final.sorted.bam
-
-# Verify indexes exist
-ls -la *.bai
-
-# Update parameters if different structure
-nextflow run main.nf --bam_root /actual/path --bam_glob "**/*.bam"
-```
-
-#### Issue: Missing reference files
-```bash
-# Verify reference files exist
-ls -la resources/
-ls -la resources/PlasmoDB-67_Pfalciparum3D7_Genome.fasta
-samtools faidx resources/PlasmoDB-67_Pfalciparum3D7_Genome.fasta
-```
-
-#### Issue: Conda environment creation fails
-```bash
-# Update conda
-conda update -n base conda
-
-# Clean cache
-conda clean --all
-
-# Recreate environment
-nextflow run main.nf -profile conda --clean
-```
-
-### Docker-Specific Troubleshooting
-
-#### Check available images
-```bash
-docker images | grep -E "fastqc|minimap2|bcftools"
-```
-
-#### Remove stale containers/images
-```bash
-# Remove stopped containers
-docker container prune
-
-# Remove dangling images
-docker image prune
-```
-
-#### View Docker execution logs
-```bash
-# Enable Nextflow debug mode
-nextflow run main.nf -debug -profile docker
-```
-
-### Offline Mode Checklist
-
-- [ ] All Docker images downloaded and saved locally
-- [ ] Docker service running on target machine
-- [ ] Images loaded into Docker daemon (`docker load`)
-- [ ] Nextflow cache cleared (`nextflow clean -f`)
-- [ ] Running with `-offline` flag
-- [ ] All reference data available locally
-
-## Performance Tips
-
-1. **Enable caching**: Nextflow automatically caches intermediate results
-2. **Use parallel processing**: Adjust `bcftools_threads` based on CPU availability
-3. **Monitor progress**: Use Nextflow reports with `-with-timeline` and `-with-report`
-4. **Batch samples**: Process multiple samples in single runs efficiently
-
-## Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Commit changes (`git commit -am 'Add your feature'`)
-4. Push to branch (`git push origin feature/your-feature`)
-5. Open a Pull Request
-
-## Citation
-
-If you use this pipeline in your research, please cite:
-
-```
-[Author et al. (Year). Pipeline name. Journal/Repository]
-```
-
-## License
-
-This project is licensed under the MIT License - see LICENSE file for details.
-
-## Contact & Support
-
-- **Issues**: Please report bugs and feature requests on GitHub Issues
-- **Email**: [your-email@institution.edu]
-- **Documentation**: Additional help at `docs/` (if available)
-
-## Acknowledgments
-
-- Built with [Nextflow](https://www.nextflow.io/) - Data-driven computational pipelines for complex genome analysis
-- Reference genome from [PlasmoDB](https://plasmodb.org/)
-- Variant analysis using [bcftools](http://samtools.github.io/bcftools/)
-- Consensus generation using [iVar](https://andersen-lab.github.io/ivar/html/)
-
-## Future Enhancements
-
-- [ ] Support for additional variant callers (GATK, Freebayes)
-- [ ] Integration with population genetics analysis
-- [ ] Automated report generation
-- [ ] Web-based visualization portal
-- [ ] Expanded drug-resistance gene profiles
-- [ ] Integration with ClonalFrameML for phylogenetic analysis
-
-## Configuration Files
-
-### nextflow.config
-```
-location: ./nextflow.config
-Contains:
-- Docker image specifications for each process
-- Conda environment definitions
-- HPC/SLURM settings
-- Resource limits (CPU, memory, time)
-- Report generation settings
-```
-
-### Environment YAML Files
-Located in `environments/` directory:
-- `fastqc.yaml` - FastQC dependencies
-- `minimap2.yaml` - Minimap2 and samtools
-- `ivar.yaml` - iVar, samtools, bcftools
-- `bcftools.yaml` - Bcftools, samtools, bedtools
-- `r-analysis.yaml` - R and visualization packages
-- `default.yaml` - All tools combined
-
-## Docker Container References
-
-The pipeline automatically pulls these images:
-
-| Tool | Image | Version |
-|------|-------|---------|
-| FastQC | `biocontainers/fastqc` | v0.12.1 |
-| minimap2 | `biocontainers/minimap2` | v2.24 |
-| samtools | `biocontainers/samtools` | latest |
-| bcftools | `biocontainers/bcftools` | v1.17 |
-| bedtools | `biocontainers/bedtools` | v2.31.0 |
-| iVar | `andersenlabapps/ivar` | latest |
-| R | `rocker/r-base` | 4.3.1 |
-
-### Pre-cache Docker Images for Offline Use
-```bash
-# Create directory for Docker images
-mkdir -p docker-images
-
-# Pull all images
-docker pull biocontainers/fastqc:v0.12.1-1-deb_cv1
-docker pull biocontainers/minimap2:v2.24-1-deb_cv1
-docker pull biocontainers/samtools:latest
-docker pull biocontainers/bcftools:v1.17-1-deb_cv1
-docker pull biocontainers/bedtools:v2.31.0-1-deb_cv1
-docker pull andersenlabapps/ivar:latest
-docker pull rocker/r-base:4.3.1
-
-# Export to tar.gz files
-docker save biocontainers/fastqc:v0.12.1-1-deb_cv1 | gzip > docker-images/fastqc.tar.gz
-docker save biocontainers/minimap2:v2.24-1-deb_cv1 | gzip > docker-images/minimap2.tar.gz
-docker save biocontainers/samtools:latest | gzip > docker-images/samtools.tar.gz
-docker save biocontainers/bcftools:v1.17-1-deb_cv1 | gzip > docker-images/bcftools.tar.gz
-docker save biocontainers/bedtools:v2.31.0-1-deb_cv1 | gzip > docker-images/bedtools.tar.gz
-docker save andersenlabapps/ivar:latest | gzip > docker-images/ivar.tar.gz
-docker save rocker/r-base:4.3.1 | gzip > docker-images/r-base.tar.gz
-
-# Transfer docker-images/ folder to offline machine
-```
-
-### Load Images on Offline Machine
-```bash
-# Load all images
-for file in docker-images/*.tar.gz; do
-    gunzip -c "$file" | docker load
-done
-
-# Verify images
-docker images
-```
-
-## Future Enhancements
-
-- [ ] Support for additional variant callers (GATK, Freebayes)
-- [ ] Integration with population genetics analysis
-- [ ] Automated report generation with interactive dashboards
-- [ ] Web-based visualization portal
-- [ ] Expanded drug-resistance gene profiles
-- [ ] Integration with ClonalFrameML for phylogenetic analysis
-- [ ] Snakemake alternative workflow
-- [ ] GPU acceleration for alignment
 
 ---
 
-**Last Updated**: March 2026  
-**Pipeline Version**: 1.0
+## 🔄 재실행 / 이어서 실행
+
+```bash
+# 캐시된 결과 활용하여 이어서 실행 (실패한 단계부터)
+nextflow run main.nf -profile standard -resume
+
+# 완전히 새로 실행 (모든 캐시 삭제)
+rm -rf work/ .nextflow/ .nextflow.log*
+nextflow run main.nf -profile standard
+```
+
+---
+
+## 🐛 문제 해결
+
+### "No FASTQ files found" 오류
+```bash
+# data 폴더에 파일이 있는지 확인
+ls data/barcode01/*.fastq.gz | head -3
+```
+
+### "Command not found" 오류
+```bash
+# 필요한 도구가 설치되어 있는지 확인
+./setup.sh
+```
+
+### 메모리 부족
+```bash
+# nextflow.config에서 리소스 조정
+# params.max_memory = '64.GB'
+# 또는 실행 시 오버라이드
+nextflow run main.nf -profile standard --max_memory '64.GB'
+```
+
+### 특정 단계만 다시 실행
+```bash
+# 예) 변이 호출만 다시 실행 (정렬은 캐시 사용)
+nextflow run main.nf -profile standard -resume --do_variants true
+```
+
+---
+
+## 📜 라이선스
+
+연구 목적으로 자유롭게 사용 가능합니다.

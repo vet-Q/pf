@@ -1,33 +1,65 @@
 #!/bin/bash
-# WSL에서 Nextflow 한 번에 설치 및 실행
+# Plasmodium falciparum Nextflow Pipeline - Linux Runner
 
-cd "/c/Users/kwono/OneDrive/문서/python project/pfNextflow"
+set -euo pipefail
 
-# Java 설정
-export JAVA_HOME="/c/Program Files/Java/jdk-25.0.2"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Use system Java 21 (Nextflow requires Java 17+)
+export JAVA_HOME="/usr/lib/jvm/java-21-openjdk-amd64"
 export PATH="$JAVA_HOME/bin:$PATH"
 
 echo "=========================================="
-echo "  pfNextflow - WSL 간단 실행"
+echo "  pfNextflow - Linux Pipeline Runner"
 echo "=========================================="
 echo ""
 
-# Step 1: Java 확인
-echo "[1/3] Java 확인..."
-"$JAVA_HOME/bin/java" -version
+# Step 1: Check Java
+echo "[1/4] Checking Java..."
+if ! command -v java &>/dev/null; then
+    echo "ERROR: Java not found. Install Java 11+ (e.g. sudo apt install default-jdk)"
+    exit 1
+fi
+java -version 2>&1 | head -1
 echo ""
 
-# Step 2: Nextflow 설치
-echo "[2/3] Nextflow 설치..."
-if [ ! -f "nextflow" ]; then
+# Step 2: Check Nextflow
+echo "[2/4] Checking Nextflow..."
+if [ -f "./nextflow" ]; then
+    NF="./nextflow"
+elif command -v nextflow &>/dev/null; then
+    NF="nextflow"
+else
+    echo "Nextflow not found. Installing..."
     curl -s https://get.nextflow.io | bash
     chmod +x nextflow
+    NF="./nextflow"
 fi
-./nextflow -version
+$NF -version
 echo ""
 
-# Step 3: 파이프라인 실행
-echo "[3/3] 파이프라인 실행 중..."
+# Step 3: Check required tools
+echo "[3/4] Checking bioinformatics tools..."
+for tool in samtools minimap2 bcftools ivar Rscript; do
+    if command -v "$tool" &>/dev/null; then
+        echo "  ✓ $tool found: $(which $tool)"
+    else
+        echo "  ✗ $tool NOT found - please install it"
+    fi
+done
 echo ""
-./nextflow run main.nf
+
+# Step 4: Index reference genome if needed
+REF="resources/PlasmoDB-67_Pfalciparum3D7_Genome.fasta"
+if [ -f "$REF" ] && [ ! -f "${REF}.fai" ]; then
+    echo "  Indexing reference genome..."
+    samtools faidx "$REF"
+fi
+echo ""
+
+# Step 5: Run pipeline (local profile, no Docker)
+echo "[4/4] Running pipeline..."
+echo ""
+$NF run main.nf -profile standard
 

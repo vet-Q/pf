@@ -13,41 +13,31 @@ process MINIMAP2_ALIGN {
     input:
     tuple val(sample_id), path(fastq_files)
     path reference
+    val preset
     
     output:
-    tuple val(sample_id), path("${sample_id}.Pf3D7.sorted.bam"), path("${sample_id}.Pf3D7.sorted.bam.bai"), emit: bam
-    path "*.minimap2.sam", emit: sam
+    tuple val(sample_id), path("${sample_id}.Pf3D7.sorted.bam"), emit: bam
     
     script:
     """
-    # Check if input is single or paired-end
-    FASTQ_COUNT=\$(echo "${fastq_files}" | wc -w)
-    
-    if [ \$FASTQ_COUNT -eq 1 ]; then
-        # Single-end
-        minimap2 -a -x map-pb \
-            -t ${task.cpus} \
-            "${reference}" \
-            "${fastq_files}" \
-            > "${sample_id}.minimap2.sam"
-    else
-        # Paired-end (first two files)
-        READ1=\$(echo "${fastq_files}" | awk '{print \$1}')
-        READ2=\$(echo "${fastq_files}" | awk '{print \$2}')
-        
-        minimap2 -a -x sr \
-            -t ${task.cpus} \
-            "${reference}" \
-            "\$READ1" "\$READ2" \
-            > "${sample_id}.minimap2.sam"
-    fi
+    # Concatenate all FASTQ files for this sample, then align
+    cat ${fastq_files.join(' ')} > combined_reads.fastq.gz
+
+    minimap2 -a -x ${preset} \
+        -t ${task.cpus} \
+        "${reference}" \
+        combined_reads.fastq.gz \
+        > "${sample_id}.minimap2.sam"
     
     # Convert SAM to BAM and sort
-    samtools view -@ ${task.cpus} -b "${sample_id}.minimap2.sam" | \\
+    samtools view -@ ${task.cpus} -b "${sample_id}.minimap2.sam" | \
     samtools sort -@ ${task.cpus} -o "${sample_id}.Pf3D7.sorted.bam"
     
     # Index BAM file
     samtools index "${sample_id}.Pf3D7.sorted.bam"
+
+    # Clean up intermediates
+    rm -f combined_reads.fastq.gz "${sample_id}.minimap2.sam"
     """
 }
 

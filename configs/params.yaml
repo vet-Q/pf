@@ -9,15 +9,15 @@
 # data 폴더 기준 상대 경로 또는 절대 경로
 paths:
   # 입력 BAM 파일 경로 (이미 정렬된 BAM)
-  bam_root: "../data/result/03_pf_mapping/mapped_pf"
+  bam_root: "./results/alignment/minimap2"
   bam_glob: "*.bam"
   
   # 또는 FASTQ에서 정렬까지 진행하는 경우
-  fastq_root: "../data"
+  fastq_root: "./data"
   fastq_glob: "barcode*/*.fastq.gz"
   
   # 출력 디렉토리
-  outdir: "../data/result/analysis_output"
+  outdir: "./results"
 
 # ==================== REFERENCE FILES ====================
 references:
@@ -28,7 +28,7 @@ references:
 # true/false로 각 분석 단계 활성화/비활성화
 pipeline:
   do_fastqc: false          # FastQ 품질 관리
-  do_alignment: false       # minimap2 정렬 (FASTQ 입력 필요)
+  do_alignment: true        # minimap2 정렬 (FASTQ 입력 필요)
   do_depth: true            # 깊이 분석
   do_ivar: true             # iVar consensus 생성
   do_gene_bins: true        # 유전자별 깊이 분석
@@ -46,7 +46,7 @@ ivar:
 
 # ==================== MINIMAP2 ALIGNMENT PARAMETERS ====================
 minimap2:
-  preset: "sr"              # "sr" (단문제), "map-pb" (PacBio), "map-ont" (Nanopore), "asm5"
+  preset: "map-ont"         # "sr" (short reads), "map-pb" (PacBio), "map-ont" (Nanopore), "asm5"
   threads: 4
 
 # ==================== BCFTOOLS VARIANT CALLING PARAMETERS ====================
