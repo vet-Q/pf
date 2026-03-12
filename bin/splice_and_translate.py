@@ -219,6 +219,178 @@ def splice_exons(seq: str, seq_start0: int, exons: list, strand: str) -> str:
     return rev_comp(joined) if strand == '-' else joined
 
 
+# ── VCF AF parser ─────────────────────────────────────────────────────────────
+
+def parse_vcf_af(vcf_path: str) -> dict:
+    """
+    bcftools VCF(gz)에서 SNP 위치별 allele frequency 를 읽는다.
+    FORMAT 에 AD(allele depth) 가 있어야 하며,
+    AF = alt_AD / (ref_AD + alt_AD) 로 계산한다.
+
+    Returns
+    -------
+    dict : { genomic_pos_0based : {
+               'chrom': str, 'ref': str, 'alt': str,
+               'ref_ad': int, 'alt_ad': int, 'af': float } }
+    """
+    import gzip as _gzip
+    lookup: dict = {}
+    opener = _gzip.open if vcf_path.endswith('.gz') else open
+    with opener(vcf_path, 'rt') as fh:
+        for line in fh:
+            if line.startswith('#') or not line.strip():
+                continue
+            parts = line.split('\t')
+            if len(parts) < 10:
+                continue
+            chrom, pos1, ref, alt_field = parts[0], int(parts[1]), parts[3], parts[4]
+            alt = alt_field.split(',')[0]          # 첫 번째 ALT allele 만
+            if len(ref) != 1 or len(alt) != 1:
+                continue                            # indel 제외
+            fmt = dict(zip(parts[8].split(':'), parts[9].rstrip().split(':')))
+            ad_str = fmt.get('AD', '.')
+            if '.' in ad_str:
+                continue
+            ads = ad_str.split(',')
+            if len(ads) < 2:
+                continue
+            try:
+                ref_ad, alt_ad = int(ads[0]), int(ads[1])
+            except ValueError:
+                continue
+            total = ref_ad + alt_ad
+            if total == 0:
+                continue
+            lookup[pos1 - 1] = {               # 0-based 변환
+                'chrom': chrom, 'ref': ref, 'alt': alt,
+                'ref_ad': ref_ad, 'alt_ad': alt_ad, 'af': alt_ad / total,
+            }
+    return lookup
+
+
+# ── CDS position map ──────────────────────────────────────────────────────────
+
+def build_cds_pos_map(exons: list, strand: str) -> dict:
+    """
+    게놈 위치(0-based) → CDS 내 위치(0-based) 매핑을 반환한다.
+
+    + strand : exon 을 오름차순 처리, exon 내부도 5'→3' 방향.
+    - strand : exon 을 내림차순 처리(높은 게놈 좌표가 transcript 5'),
+               exon 내부도 높은 쪽에서 낮은 쪽으로 순회.
+    """
+    pos_map: dict = {}
+    cds_i = 0
+    if strand == '+':
+        for ex in exons:
+            for gpos in range(ex['start'], ex['end']):
+                pos_map[gpos] = cds_i
+                cds_i += 1
+    else:
+        for ex in reversed(exons):
+            for gpos in range(ex['end'] - 1, ex['start'] - 1, -1):
+                pos_map[gpos] = cds_i
+                cds_i += 1
+    return pos_map
+
+
+# ── IUPAC 해소 ── VCF AF 기반 ─────────────────────────────────────────────────
+
+def resolve_and_report(
+    seq: str,
+    seq_start0: int,
+    vcf_lookup: dict,
+    cds_pos_map: dict,
+    gene: str,
+    sample: str,
+    threshold: float,
+) -> tuple:
+    """
+    consensus FASTA 의 IUPAC 코드를 VCF AF 로 해소한다.
+
+    결정 규칙
+    ---------
+    af >= threshold          → ALT 염기로 콜  ('alt_call')
+    af <= 1 - threshold      → REF 염기로 콜  ('ref_call')
+    그 외 (AF 가 중간 범위)    → IUPAC 유지   ('ambiguous_mixed') ← 혼합감염 의심
+
+    Returns
+    -------
+    resolved_seq : str   — IUPAC 해소된 서열
+    af_records   : list  — CDS 내 IUPAC 위치마다 한 행, TSV 출력에 사용
+    """
+    chars = list(seq)
+    af_records: list = []
+
+    for i, base in enumerate(chars):
+        base_up = base.upper()
+        if base_up not in IUPAC_BASES:
+            continue                            # 일반 ACGT — 건너뜀
+
+        gpos    = seq_start0 + i               # 0-based 게놈 좌표
+        cds_pos = cds_pos_map.get(gpos)        # CDS 밖이면 None
+
+        if gpos not in vcf_lookup:
+            continue                            # VCF 레코드 없음 — 건너뜀
+
+        info = vcf_lookup[gpos]
+        ref, alt  = info['ref'], info['alt']
+        ref_ad, alt_ad, af = info['ref_ad'], info['alt_ad'], info['af']
+
+        if af >= threshold:
+            resolved = alt
+            note     = 'alt_call'
+        elif af <= 1.0 - threshold:
+            resolved = ref
+            note     = 'ref_call'
+        else:
+            resolved = base_up                 # IUPAC 유지 (혼합감염 의심)
+            note     = 'ambiguous_mixed'
+
+        chars[i] = resolved
+
+        if cds_pos is not None:
+            codon_num   = cds_pos // 3 + 1    # 1-based 코돈 번호
+            codon_frame = cds_pos % 3          # 0=1st, 1=2nd, 2=3rd position
+            af_records.append({
+                'sample':      sample,
+                'gene':        gene,
+                'chrom':       info['chrom'],
+                'gen_pos':     gpos + 1,       # 1-based (보고용)
+                'cds_pos':     cds_pos + 1,    # 1-based
+                'codon':       codon_num,
+                'frame':       codon_frame,
+                'iupac':       base_up,
+                'ref':         ref,
+                'alt':         alt,
+                'ref_depth':   ref_ad,
+                'alt_depth':   alt_ad,
+                'total_depth': ref_ad + alt_ad,
+                'af':          round(af, 4),
+                'resolved':    resolved,
+                'note':        note,
+            })
+
+    return ''.join(chars), af_records
+
+
+# ── AF 표 저장 ────────────────────────────────────────────────────────────────
+
+def write_af_table(records: list, path: str) -> None:
+    """
+    IUPAC 해소 정보를 TSV 로 저장한다.
+    records 가 비어있어도 헤더만 있는 파일을 생성한다 (Nextflow 패턴 매칭용).
+    """
+    cols = [
+        'sample', 'gene', 'chrom', 'gen_pos', 'cds_pos', 'codon', 'frame',
+        'iupac', 'ref', 'alt', 'ref_depth', 'alt_depth', 'total_depth',
+        'af', 'resolved', 'note',
+    ]
+    with open(path, 'w') as fh:
+        fh.write('\t'.join(cols) + '\n')
+        for rec in records:
+            fh.write('\t'.join(str(rec[c]) for c in cols) + '\n')
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
