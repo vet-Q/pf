@@ -55,7 +55,8 @@ workflow {
       .map     { fq -> tuple(fq.parent.name, fq) }
       .groupTuple()
       .set { fastq_ch }
-  } else {
+  } else if (params.do_depth || params.do_ivar || params.do_gene_bins || params.do_variants) {
+    // BAM 이 실제로 필요한 경우에만 로드
     channel
       .fromPath("${params.bam_root}/${params.bam_glob}", checkIfExists: true)
       .ifEmpty { error "❌ No BAM files at: ${params.bam_root}/${params.bam_glob}" }
@@ -159,9 +160,16 @@ workflow {
   // ==================== CDS SPLICE + TRANSLATE + VARIANT TABLE ====================
   if (params.do_translate) {
     log.info "Running: CDS Splice, Translate & Variant Table"
-    if (vcf_ch == null) error "❌ do_translate requires do_variants=true"
 
     def cds_tsv_ch = channel.value(file("${projectDir}/resources/cds_coords.tsv"))
+
+    // vcf_ch 가 없으면 (단독 do_translate 실행) 디스크의 기존 calling 결과에서 로드
+    if (vcf_ch == null) {
+      log.info "  기존 calling 결과를 디스크에서 로드: ${params.outdir}/calling/${params.variant_method}/"
+      vcf_ch = channel
+        .fromPath("${params.outdir}/calling/${params.variant_method}/*", type: 'dir', checkIfExists: true)
+        .ifEmpty { error "❌ do_translate 에는 do_variants=true 또는 ${params.outdir}/calling/${params.variant_method}/ 하위 디렉토리가 필요합니다." }
+    }
 
     // 샘플별 변이 디렉토리에 barcode 이름 부여
     vcf_ch
