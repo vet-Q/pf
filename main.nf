@@ -174,7 +174,8 @@ workflow {
       cds_tsv_ch,
       params.genes,
       params.outdir,
-      params.variant_method
+      params.variant_method,
+      params.ivar_threshold   // IUPAC 해소 AF threshold (bcftools consensus 결과용)
     )
 
     // NT: 유전자별로 전체 샘플 모음 (barcode01.CRT.nt.fasta → gene key = CRT)

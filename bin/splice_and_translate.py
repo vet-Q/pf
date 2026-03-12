@@ -43,6 +43,8 @@ Usage:
 """
 
 import argparse
+import gzip
+import os
 import subprocess
 import sys
 
@@ -70,6 +72,17 @@ _RC = str.maketrans(
     'ACGTacgtNnRrYyKkMmSsWwBbDdHhVv',
     'TGCAtgcaNnYyRrMmKkSsWwVvHhDdBb'
 )
+
+# bcftools consensus 가 heterozygous site 에 삽입하는 IUPAC ambiguity 코드와
+# 그것이 나타낼 수 있는 표준 염기 집합의 매핑.
+# VCF 의 AF 를 이용해 어느 쪽 염기인지 결정할 때 사용한다.
+IUPAC_BASES: dict = {
+    'R': frozenset('AG'),  'Y': frozenset('CT'),  'S': frozenset('GC'),
+    'W': frozenset('AT'),  'K': frozenset('GT'),  'M': frozenset('AC'),
+    'B': frozenset('CGT'), 'D': frozenset('AGT'),
+    'H': frozenset('ACT'), 'V': frozenset('ACG'),
+    'N': frozenset('ACGT'),
+}
 
 
 # ── Sequence utilities ────────────────────────────────────────────────────────
@@ -225,6 +238,19 @@ def main():
     ap.add_argument('--sample', required=True, help='Sample label written to FASTA header')
     ap.add_argument('--out-nt', required=True, help='Output nucleotide FASTA path')
     ap.add_argument('--out-aa', required=True, help='Output amino-acid FASTA path')
+    ap.add_argument(
+        '--vcf',
+        default=None,
+        help='Per-gene bcftools VCF (.vcf.gz, with FORMAT/AD) for IUPAC resolution'
+    )
+    ap.add_argument(
+        '--af-threshold', type=float, default=0.6,
+        help='AF >= t → call ALT; AF <= 1-t → call REF; otherwise keep IUPAC (default 0.6)'
+    )
+    ap.add_argument(
+        '--out-af', default=None,
+        help='Output TSV path for IUPAC AF resolution table'
+    )
     args = ap.parse_args()
 
     if not args.fasta and not args.ref_fasta:
@@ -254,6 +280,30 @@ def main():
         header, seq = read_fasta_first(args.fasta)
         seq_start0  = get_bed_start(header)
 
+    # ── IUPAC 해소 (consensus 모드 + VCF 제공 시) ──────────────────────────────
+    af_records: list = []
+    if args.fasta and args.vcf:
+        if not os.path.exists(args.vcf):
+            print(f"  WARNING: --vcf not found, skipping IUPAC resolution: {args.vcf}",
+                  file=sys.stderr)
+        else:
+            vcf_lookup = parse_vcf_af(args.vcf)
+            if vcf_lookup:
+                cds_pos_map = build_cds_pos_map(exons, strand)
+                seq, af_records = resolve_and_report(
+                    seq, seq_start0, vcf_lookup, cds_pos_map,
+                    args.gene, args.sample, args.af_threshold,
+                )
+                n_resolved = sum(1 for r in af_records if r['note'] != 'ambiguous_mixed')
+                n_mixed    = len(af_records) - n_resolved
+                if af_records:
+                    print(
+                        f"  {args.gene} [{args.sample}]: "
+                        f"{n_resolved} IUPAC resolved, "
+                        f"{n_mixed} remain ambiguous (AF {1-args.af_threshold:.2f}~{args.af_threshold:.2f})",
+                        file=sys.stderr,
+                    )
+
     # ── Splice exons ──────────────────────────────────────────────────────────
     spliced_nt = splice_exons(seq, seq_start0, exons, strand)
 
@@ -272,6 +322,10 @@ def main():
         f"{len(spliced_nt)} bp → {len(protein)} aa",
         file=sys.stderr,
     )
+
+    # ── AF 표 저장 (--out-af 지정 시) ──────────────────────────────────────────
+    if args.out_af is not None:
+        write_af_table(af_records, args.out_af)
 
 
 if __name__ == '__main__':
