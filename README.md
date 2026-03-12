@@ -295,8 +295,10 @@ results/
 │   ├── per_sample/                    ← 샘플별 spliced 서열
 │   │   ├── barcode01.CRT.nt.fasta    ← exon 접합 CDS (핵산)
 │   │   ├── barcode01.CRT.aa.fasta    ← 번역 단백질 서열
+│   │   ├── barcode01.CRT.af.tsv      ← IUPAC 해소 AF 정보표
 │   │   ├── barcode01.DHFR.nt.fasta
 │   │   ├── barcode01.DHFR.aa.fasta
+│   │   ├── barcode01.DHFR.af.tsv
 │   │   └── ...
 │   ├── CRT/
 │   │   ├── CRT.nt.combined.fasta     ← 3D7 + 전체 샘플 NT 합본
@@ -381,6 +383,7 @@ genomic 서열 안에 여러 개의 intron이 존재하여, BED 범위의 consen
 
 최종 출력:
   CRT.aa.variants.tsv  ← pos / ref / barcode01 / barcode02 / ...
+  barcode01.CRT.af.tsv ← CDS 내 IUPAC 위치별 AF 정보 (아래 참조)
 ```
 
 ### 변이표 예시 (CRT.aa.variants.tsv)
@@ -404,7 +407,65 @@ nextflow run main.nf -profile standard \
 
 # 또는 커맨드라인 직접 지정
 nextflow run main.nf -profile standard --do_translate true
+
+# do_variants 없이 기존 calling 결과에서 단독 실행 (-resume으로 CALL_VARIANTS 캐시 재사용)
+nextflow run main.nf -profile standard \
+  --do_translate true \
+  --do_alignment false \
+  --do_depth false \
+  --do_ivar false \
+  --do_gene_bins false \
+  --do_variants false \
+  --do_afdp false \
+  -resume
 ```
+
+> `do_variants=false`이더라도 `results/calling/bcftools/` 폴더가 존재하면
+> 자동으로 기존 결과를 읽어 SPLICE_TRANSLATE → ALIGN_VARIANTS를 실행합니다.
+
+---
+
+### 🔬 IUPAC 염기 해소 (AF 기반)
+
+#### 배경
+
+`bcftools consensus`는 heterozygous site(REF와 ALT 둘 다 존재)를 **IUPAC 모호성 코드**로 표기합니다.
+예: Y = C/T 혼재, R = A/G 혼재, K = G/T 혼재
+
+이 경우 코돈 안에 IUPAC 코드가 있으면 번역 시 **X**(unknown)가 되어 아미노산 변이 분석이 불가능합니다.
+또한 단순한 heterozygous call인지, **혼합감염(mixed infection)**인지 구분이 필요합니다.
+
+#### 해소 방법
+
+`splice_and_translate.py`는 bcftools VCF의 `FORMAT/AD`(allele depth)를 읽어
+**실제 allele frequency(AF)**를 계산한 뒤 아래 규칙으로 IUPAC를 해소합니다:
+
+| 조건 | 결정 | 의미 |
+|---|---|---|
+| AF ≥ threshold (0.6) | **ALT 염기로 확정** | 지배적인 변이 allele |
+| AF ≤ 1 − threshold (0.4) | **REF 염기로 확정** | 지배적인 reference allele |
+| 0.4 < AF < 0.6 | **IUPAC 유지** | 혼합감염 의심 |
+
+> threshold는 `ivar_threshold` 파라미터(기본 0.6)를 공유합니다.
+
+#### AF 정보 파일 (`*.af.tsv`)
+
+`results/translation/per_sample/{barcode}.{GENE}.af.tsv` 에 저장됩니다.
+
+| 컬럼 | 설명 |
+|---|---|
+| `sample`, `gene` | 샘플 / 유전자 |
+| `chrom`, `gen_pos` | 게놈 위치 (1-based) |
+| `cds_pos`, `codon`, `frame` | CDS 내 위치 / 코돈 번호 / 코돈 내 위치(0~2) |
+| `iupac` | 원래 IUPAC 코드 (Y, R, K 등) |
+| `ref`, `alt` | VCF 상의 REF / ALT 염기 |
+| `ref_depth`, `alt_depth`, `total_depth` | 각 allele 읽기 수 |
+| `af` | ALT allele frequency (alt / total) |
+| `resolved` | 최종 결정된 염기 |
+| `note` | `alt_call` / `ref_call` / `ambiguous_mixed` |
+
+**`ambiguous_mixed` 행이 많은 샘플은 혼합감염(mixed infection)을 의심**할 수 있으며,
+`alt_call` / `ref_call`로 해소된 경우 번역 결과에서 X 대신 실제 아미노산이 출력됩니다.
 
 ---
 
