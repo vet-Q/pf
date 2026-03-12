@@ -190,6 +190,7 @@ workflow {
     SPLICE_TRANSLATE.out.nt_fastas
       .flatten()
       .filter { f -> !f.name.startsWith('EMPTY') }
+      .unique { it.name }   // -resume 시 캐시+신규 중복 방지
       .map    { f -> tuple(f.name.tokenize('.')[1], f) }
       .groupTuple()
       .set { nt_by_gene_ch }
@@ -198,6 +199,7 @@ workflow {
     SPLICE_TRANSLATE.out.aa_fastas
       .flatten()
       .filter { f -> !f.name.startsWith('EMPTY') }
+      .unique { it.name }   // -resume 시 캐시+신규 중복 방지
       .map    { f -> tuple(f.name.tokenize('.')[1], f) }
       .groupTuple()
       .set { aa_by_gene_ch }
