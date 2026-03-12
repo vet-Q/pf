@@ -15,35 +15,39 @@ pf/
 │
 ├── configs/
 │   └── params.yaml          ← (참고용) 파라미터 설명 파일
+│                              ※ 실행 시 -params-file 옵션으로 지정해야 적용됨
 │
 ├── data/                    ← 📂 입력 데이터 (barcode별 FASTQ)
 │   ├── barcode01/
-│   │   ├── *.fastq.gz
-│   │   └── ...
-│   ├── barcode02/
+│   │   └── *.fastq.gz
 │   └── ... (barcode24까지)
 │
 ├── resources/               ← 참조 파일
 │   ├── PlasmoDB-67_Pfalciparum3D7_Genome.fasta   ← 레퍼런스 게놈
 │   ├── PlasmoDB-67_Pfalciparum3D7_Genome.fasta.fai
-│   └── amplicons.bed        ← 유전자 좌표 (CRT, DHFR, ...)
+│   ├── amplicons.bed        ← amplicon 영역 좌표 (8개 유전자)
+│   └── cds_coords.tsv       ← CDS exon 좌표 (번역용, PlasmoDB-55 기반)
 │
 ├── modules/                 ← Nextflow 모듈 (각 분석 단계)
 │   ├── minimap2_align.nf    ← FASTQ → BAM 정렬
 │   ├── pf_depth.nf          ← 깊이 분석
 │   ├── ivar_consensus.nf    ← 합의 서열 생성
 │   ├── call_variants.nf     ← bcftools 변이 호출
+│   ├── splice_translate.nf  ← CDS 접합 + 번역 (샘플별)
+│   ├── align_variants.nf    ← MAFFT 정렬 + 변이표 생성 (유전자별)
 │   ├── gene_bins_nf.nf      ← 유전자별 read-length bin 분석
 │   ├── gene_bins_plot_nf.nf ← 멀티패널 플롯
 │   ├── gene_1to8_plot.nf    ← 1×8 유전자 플롯
 │   ├── af_dp_figures.nf     ← AF/DP 산점도 피규어
 │   └── fastq_qc.nf          ← FastQC 품질 관리
 │
-├── bin/                     ← 헬퍼 스크립트 (Shell + R)
+├── bin/                     ← 헬퍼 스크립트 (Shell + Python + R)
 │   ├── call_bcftools.sh
 │   ├── call_ivar.sh
 │   ├── make_consensus_bcftools.sh
 │   ├── make_consensus_ivar.sh
+│   ├── splice_and_translate.py  ← CDS exon 추출 + 접합 + 번역 (Python)
+│   ├── gene_msa_variants.R      ← 유전자별 MSA + 변이표 생성 (R)
 │   ├── make_af_dp_figures.R
 │   ├── plot_depth_per_gene.R
 │   ├── plot_gene_multipanel.R
@@ -53,7 +57,8 @@ pf/
     ├── alignment/minimap2/  ← 정렬된 BAM 파일
     ├── pf_depth/            ← 깊이 분석 결과
     ├── calling/ivar/        ← iVar 합의 서열 + 변이
-    ├── calling/bcftools/    ← bcftools VCF 파일
+    ├── calling/bcftools/    ← bcftools VCF + consensus FASTA
+    ├── translation/         ← CDS 번역 + MAFFT 정렬 + 변이표
     ├── gene_bins/           ← 유전자별 bin 분석
     ├── figures/afdp/        ← AF/DP 피규어
     └── pipeline_info/       ← Nextflow 실행 리포트
@@ -73,6 +78,8 @@ pf/
 | **minimap2** | FASTQ → BAM 정렬 | `minimap2 --version` |
 | **bcftools** | 변이 호출 (VCF) | `bcftools --version` |
 | **ivar** | 합의 서열 생성 | `ivar version` |
+| **mafft** | 다중 서열 정렬 (번역 기능) | `mafft --version` |
+| **python3** ≥ 3.8 | CDS 접합·번역·변이표 스크립트 | `python3 --version` |
 | **Rscript** ≥ 4.0 | 시각화 (ggplot2 등) | `Rscript --version` |
 
 ### 설치 방법 (Ubuntu/Debian)
@@ -87,7 +94,7 @@ chmod +x nextflow
 sudo mv nextflow /usr/local/bin/
 
 # 생물정보학 도구 (conda 추천)
-conda install -c bioconda samtools minimap2 bcftools ivar
+conda install -c bioconda samtools minimap2 bcftools ivar mafft
 
 # R 패키지 (R 콘솔에서)
 # install.packages(c("ggplot2", "dplyr", "patchwork", "stringr", "purrr", "optparse"))
@@ -166,12 +173,23 @@ FASTQ 입력 (data/barcode*/*.fastq.gz)
 │(do_depth)│       │ (do_ivar)    │   │(do_gene_bins)│     │(do_variants) │
 └──────────┘       └──────────────┘   └──────┬───────┘     └──────┬───────┘
                                               │                    │
-                                              ▼                    ▼
-                                     ┌──────────────┐     ┌──────────────┐
-                                     │ 멀티패널 플롯 │     │ ⑥ AF/DP     │
-                                     │(do_multipanel)│     │  피규어     │
-                                     └──────────────┘     │ (do_afdp)   │
-                                                          └──────────────┘
+                                              ▼                    │
+                                     ┌──────────────┐             │
+                                     │ 멀티패널 플롯 │             │
+                                     │(do_multipanel)│             │
+                                     └──────────────┘             │
+                                                                   ├──────────────────┐
+                                                                   ▼                  ▼
+                                                          ┌──────────────┐  ┌─────────────────────┐
+                                                          │ ⑥ AF/DP     │  │ ⑦ CDS 번역/변이표   │
+                                                          │  피규어     │  │  (do_translate)     │
+                                                          │ (do_afdp)   │  │                     │
+                                                          └──────────────┘  │ SPLICE_TRANSLATE    │
+                                                                            │  ↓ (샘플별)         │
+                                                                            │ ALIGN_VARIANTS      │
+                                                                            │  ↓ (유전자별)       │
+                                                                            │ NT/AA MSA + 변이표  │
+                                                                            └─────────────────────┘
 ```
 
 ### 각 단계 상세
@@ -184,6 +202,7 @@ FASTQ 입력 (data/barcode*/*.fastq.gz)
 | **④ 유전자 bin 분석** | `do_gene_bins: true` | Read 길이를 0-1k, 1-2k, 2-3k, 3-4k, 4k+ 구간으로 분류하여 깊이 분석 |
 | **⑤ 변이 호출** | `do_variants: true` | bcftools로 SNP 호출 → VCF.gz 생성 + bcftools consensus |
 | **⑥ AF/DP 피규어** | `do_afdp: true` | 모든 유전자의 Allele Frequency vs Depth 산점도/히스토그램 생성 |
+| **⑦ CDS 번역·변이표** | `do_translate: false` | consensus에서 exon만 추출→접합→번역→MAFFT 정렬→변이표 생성 (아래 상세 참조) |
 
 ---
 
@@ -220,6 +239,7 @@ FASTQ 입력 (data/barcode*/*.fastq.gz)
 | `do_gene_bins` | `true` | 유전자별 read-length bin 분석 |
 | `do_variants` | `true` | bcftools 변이 호출 |
 | `do_afdp` | `true` | AF/DP 피규어 생성 |
+| `do_translate` | `false` | CDS 번역·다중 정렬·변이표 생성 (⑦단계, mafft 필요) |
 | `do_fastqc` | `false` | FastQC 품질 보고서 |
 | `do_multipanel` | `false` | 멀티패널 플롯 |
 | `do_gene_1x8` | `false` | 1×8 유전자 플롯 |
@@ -271,10 +291,139 @@ results/
 │   ├── Figure1_by_gene.pdf            ← 유전자별 AF vs DP 산점도
 │   └── Figure2_overall.pdf            ← 전체 AF vs DP 산점도
 │
+├── translation/
+│   ├── per_sample/                    ← 샘플별 spliced 서열
+│   │   ├── barcode01.CRT.nt.fasta    ← exon 접합 CDS (핵산)
+│   │   ├── barcode01.CRT.aa.fasta    ← 번역 단백질 서열
+│   │   ├── barcode01.DHFR.nt.fasta
+│   │   ├── barcode01.DHFR.aa.fasta
+│   │   └── ...
+│   ├── CRT/
+│   │   ├── CRT.nt.combined.fasta     ← 3D7 + 전체 샘플 NT 합본
+│   │   ├── CRT.nt.msa.fasta          ← MAFFT 정렬 NT
+│   │   ├── CRT.nt.variants.tsv       ← 핵산 변이표
+│   │   ├── CRT.aa.combined.fasta     ← 3D7 + 전체 샘플 AA 합본
+│   │   ├── CRT.aa.msa.fasta          ← MAFFT 정렬 AA
+│   │   └── CRT.aa.variants.tsv       ← 아미노산 변이표 (★ 핵심 결과)
+│   ├── DHFR/
+│   │   └── ...
+│   └── ...
+│
 └── pipeline_info/
     ├── report.html                    ← Nextflow 실행 리포트
     └── timeline.html                  ← 실행 시간 타임라인
 ```
+
+---
+
+## 🧬 CDS 번역 및 변이표 생성 (`do_translate`)
+
+### 배경: amplicon BED ≠ ORF 범위
+
+`amplicons.bed`에 정의된 amplicon 범위는 amplicon 프라이머 설계 기준이므로
+실제 ORF(open reading frame)보다 넓습니다. 또한 일부 유전자(특히 **CRT**)는
+genomic 서열 안에 여러 개의 intron이 존재하여, BED 범위의 consensus를 그대로
+번역하면 frame이 깨집니다.
+
+이 단계는 다음 문제를 모두 자동으로 처리합니다:
+
+| 문제 | 처리 방식 |
+|---|---|
+| BED 범위 > ORF | `cds_coords.tsv`의 exon 좌표로 ORF만 잘라냄 |
+| intron 포함 | genomic 좌표로 exon 구간만 추출하여 접합 |
+| minus strand 유전자 | exon을 역방향으로 접합 후 역상보(RC) |
+| 다중 exon (예: CRT 13개) | exon을 transcript 순서(5'→3')로 이어 붙임 |
+
+### 대상 유전자 exon 구조
+
+| 유전자 | PlasmoDB ID | exon 수 | strand | 단백질 길이 |
+|---|---|---|---|---|
+| **CRT** | PF3D7_0709000 | 13 | + | 424 aa |
+| **DHFR** | PF3D7_0417200 | 1 | + | 608 aa |
+| **DHPS** | PF3D7_0810800 | 3 | + | 706 aa |
+| **K13** | PF3D7_1343700 | 1 | − | 726 aa |
+| **MDR1** | PF3D7_0523000 | 1 | + | 1419 aa |
+| **MSP2** | PF3D7_0206800 | 1 | − | 272 aa |
+| **PMI** | PF3D7_1407900 | 1 | + | 452 aa |
+| **PMIII** | PF3D7_1408100 | 1 | + | 451 aa |
+
+> CDS exon 좌표는 `resources/cds_coords.tsv`에 0-based BED 형식으로 저장되어 있습니다.
+> PlasmoDB-55 GFF annotation 기준으로 추출하였으며 PlasmoDB-67 게놈과 호환됩니다.
+
+### 처리 흐름
+
+```
+[bcftools consensus FASTA]
+  (BED 전체 범위, intron 포함)
+          │
+          │  splice_and_translate.py  (Python)
+          │  1) FASTA 헤더에서 genomic offset 계산
+          │  2) cds_coords.tsv에서 exon 좌표 읽기
+          │  3) exon 구간만 잘라냄 (intron 제거)
+          │  4) + strand: 좌→우 접합
+          │     - strand: 우→좌 접합 후 역상보(RC)
+          │  5) 표준 유전부호로 번역 (N→X 처리)
+          ▼
+  barcode01.CRT.nt.fasta   ← spliced CDS (핵산)
+  barcode01.CRT.aa.fasta   ← 번역 단백질
+
+[3D7 reference 추출]
+  splice_and_translate.py --ref-fasta  (Python)
+  → samtools faidx로 각 exon 구간 추출 후 접합·번역
+  → 3D7 기준 서열 생성
+
+[전체 샘플 + 3D7 합본 → MAFFT 정렬 → 변이표]
+  gene_msa_variants.R  (R)
+  → 유전자별로 모든 샘플 FASTA 수집
+  → 3D7 reference 을 첫 번째로 붙여 combined FASTA 생성
+  → mafft --auto 로 NT / AA 각각 정렬
+  → 3D7 대비 variant 위치를 TSV 로 저장
+
+최종 출력:
+  CRT.aa.variants.tsv  ← pos / ref / barcode01 / barcode02 / ...
+```
+
+### 변이표 예시 (CRT.aa.variants.tsv)
+
+```
+gene  pos  ref  barcode01  barcode02  barcode03  ...
+CRT   72   C    C          S          S
+CRT   74   M    M          M          I
+CRT   75   N    N          E          E
+CRT   76   K    T          T          T          ← K76T (CQ 내성 마커)
+CRT   220  A    A          S          S          ← A220S
+```
+
+### 실행 방법
+
+```bash
+# nextflow.config에서 활성화 (do_variants도 true여야 함)
+nextflow run main.nf -profile standard \
+  --do_variants true \
+  --do_translate true
+
+# 또는 커맨드라인 직접 지정
+nextflow run main.nf -profile standard --do_translate true
+```
+
+---
+
+## ⚙️ 설정 파일 우선순위
+
+파이프라인은 두 개의 설정 파일을 사용합니다:
+
+| 파일 | 자동 적용 | 용도 |
+|---|---|---|
+| `nextflow.config` | ✅ **자동** (항상 적용) | 모든 파라미터 기본값, 실행 프로파일 |
+| `configs/params.yaml` | ❌ **수동** (`-params-file` 옵션 필요) | 파라미터 참고·설명 문서 |
+
+`configs/params.yaml`을 실제 실행에 반영하려면:
+
+```bash
+nextflow run main.nf -profile standard -params-file configs/params.yaml
+```
+
+> 일반적으로는 `nextflow.config`에서 직접 수정하는 것이 가장 간단합니다.
 
 ---
 

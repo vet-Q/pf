@@ -6,8 +6,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Use system Java 21 (Nextflow requires Java 17+)
-export JAVA_HOME="/usr/lib/jvm/java-21-openjdk-amd64"
+# Auto-detect Java home (Windows or Linux)
+if [ -d "/usr/lib/jvm/java-21-openjdk-amd64" ]; then
+    # Linux
+    export JAVA_HOME="/usr/lib/jvm/java-21-openjdk-amd64"
+elif [ -d "/c/java/jdk-25.0.2" ]; then
+    # Windows (copied Java)
+    export JAVA_HOME="/c/java/jdk-25.0.2"
+elif [ -d "/c/Program Files/Java/jdk-25.0.2" ]; then
+    # Windows (original path)
+    export JAVA_HOME="/c/Program Files/Java/jdk-25.0.2"
+fi
 export PATH="$JAVA_HOME/bin:$PATH"
 
 echo "=========================================="
@@ -41,7 +50,7 @@ echo ""
 
 # Step 3: Check required tools
 echo "[3/4] Checking bioinformatics tools..."
-for tool in samtools minimap2 bcftools ivar Rscript; do
+for tool in samtools minimap2 bcftools ivar mafft Rscript; do
     if command -v "$tool" &>/dev/null; then
         echo "  ✓ $tool found: $(which $tool)"
     else
