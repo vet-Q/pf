@@ -15,10 +15,6 @@ process GENE_BIN_DEPTH {
   """
   set -euo pipefail
 
-  echo "[DEBUG] PWD = \$(pwd)"
-  echo "[DEBUG] bed path = ${bed}"
-  ls -l ${bed}
-
   # Save absolute paths before changing directories
   bed_path=\$(readlink -f ${bed})
   bam_path=\$(readlink -f ${bam})
