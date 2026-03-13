@@ -16,15 +16,17 @@ nextflow.enable.dsl = 2
 // ==================== MODULE INCLUDES ====================
 include { FASTQ_QC }             from "./modules/fastq_qc.nf"
 include { MINIMAP2_ALIGN }       from "./modules/minimap2_align.nf"
-include { PF_DEPTH }             from "./modules/pf_depth.nf"
+include { PF_DEPTH }             from "./modules/amplicon_depth.nf"
 include { IVAR_CONSENSUS }       from "./modules/ivar_consensus.nf"
-include { GENE_BIN_DEPTH }       from "./modules/gene_bins_nf.nf"
+include { GENE_BIN_DEPTH }       from "./modules/gene_bin_depth.nf"
 include { CALL_VARIANTS }        from "./modules/call_variants.nf"
-include { PLOT_GENE_MULTIPANEL } from "./modules/gene_bins_plot_nf.nf"
-include { PLOT_GENE_1x8 }        from "./modules/gene_1to8_plot.nf"
+include { PLOT_GENE_MULTIPANEL } from "./modules/gene_multipanel_plot.nf"
+include { PLOT_GENE_1x8 }        from "./modules/gene_1x8_plot.nf"
 include { AF_DP_FIGURES }        from "./modules/af_dp_figures.nf"
 include { SPLICE_TRANSLATE }     from "./modules/splice_translate.nf"
 include { ALIGN_VARIANTS }       from "./modules/align_variants.nf"
+include { COLLECT_VARIANTS }     from "./modules/collect_variants.nf"
+include { RESISTANCE_TABLE }     from "./modules/resistance_table.nf"
 
 // ==================== MAIN WORKFLOW ====================
 workflow {
@@ -69,10 +71,13 @@ workflow {
   ref_ch = channel.value(file(ref_abs))
 
   // ── R 시각화 스크립트 채널 ───────────────────────────────────────────────
-  r_afdp      = channel.value(file("${projectDir}/bin/make_af_dp_figures.R"))
-  r_depth     = channel.value(file("${projectDir}/bin/plot_depth_per_gene.R"))
-  r_multipanel = channel.value(file("${projectDir}/bin/plot_gene_multipanel.R"))
-  r_gene1x8   = channel.value(file("${projectDir}/bin/plot_gene_1x8.R"))
+  r_afdp        = channel.value(file("${projectDir}/bin/make_af_dp_figures.R"))
+  r_depth       = channel.value(file("${projectDir}/bin/plot_depth_per_gene.R"))
+  r_multipanel  = channel.value(file("${projectDir}/bin/plot_gene_multipanel.R"))
+  r_gene1x8     = channel.value(file("${projectDir}/bin/plot_gene_1x8.R"))
+  r_collect     = channel.value(file("${projectDir}/bin/collect_variants.R"))
+  r_resistance  = channel.value(file("${projectDir}/bin/make_resistance_table.R"))
+  cds_tsv_val   = channel.value(file("${projectDir}/resources/cds_coords.tsv"))
 
   // ==================== FASTQ QC ====================
   if (params.do_fastqc) {
@@ -210,6 +215,35 @@ workflow {
       .set { by_gene_ch }
 
     ALIGN_VARIANTS(by_gene_ch, ref_ch, cds_tsv_ch, params.outdir)
+  }
+
+  // ==================== RESISTANCE MARKER TABLE ====================
+  if (params.do_resistance) {
+    log.info "Running: Drug Resistance Marker Table"
+
+    // do_variants 가 같이 실행됐으면 vcf_ch 재사용, 아니면 디스크의 기존 결과 로드
+    def vcf_ch_res = vcf_ch
+    if (vcf_ch_res == null) {
+      log.info "  Loading existing calling results: ${params.outdir}/calling/${params.variant_method}/"
+      vcf_ch_res = channel
+        .fromPath("${params.outdir}/calling/${params.variant_method}/*", type: 'dir', checkIfExists: true)
+        .ifEmpty { error "❌ do_resistance requires do_variants=true or existing results at ${params.outdir}/calling/${params.variant_method}/" }
+    }
+
+    vcf_ch_res
+      .flatMap { dir -> file("${dir}/**/*.vcf.gz") }
+      .collect()
+      .set { all_vcfs_res_ch }
+
+    COLLECT_VARIANTS(all_vcfs_res_ch, r_collect, params.outdir)
+
+    RESISTANCE_TABLE(
+      COLLECT_VARIANTS.out.variants_tsv,
+      cds_tsv_val,
+      r_resistance,
+      params.afdp_af_threshold,
+      params.outdir
+    )
   }
 
   log.info "Pipeline completed successfully!"
