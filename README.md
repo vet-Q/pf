@@ -29,25 +29,29 @@ pf/
 │   └── cds_coords.tsv       ← CDS exon 좌표 (번역용, PlasmoDB-55 기반)
 │
 ├── modules/                 ← Nextflow 모듈 (각 분석 단계)
-│   ├── minimap2_align.nf    ← FASTQ → BAM 정렬
-│   ├── pf_depth.nf          ← 깊이 분석
-│   ├── ivar_consensus.nf    ← 합의 서열 생성
-│   ├── call_variants.nf     ← bcftools 변이 호출
-│   ├── splice_translate.nf  ← CDS 접합 + 번역 (샘플별)
-│   ├── align_variants.nf    ← MAFFT 정렬 + 변이표 생성 (유전자별)
-│   ├── gene_bins_nf.nf      ← 유전자별 read-length bin 분석
-│   ├── gene_bins_plot_nf.nf ← 멀티패널 플롯
-│   ├── gene_1to8_plot.nf    ← 1×8 유전자 플롯
-│   ├── af_dp_figures.nf     ← AF/DP 산점도 피규어
-│   └── fastq_qc.nf          ← FastQC 품질 관리
+│   ├── minimap2_align.nf      ← FASTQ → BAM 정렬
+│   ├── amplicon_depth.nf      ← 깊이 분석
+│   ├── ivar_consensus.nf      ← 합의 서열 생성
+│   ├── call_variants.nf       ← bcftools 변이 호출
+│   ├── collect_variants.nf    ← 전체 샘플 VCF 병합 → variant_AF_all.tsv
+│   ├── splice_translate.nf    ← CDS 접합 + 번역 (샘플별)
+│   ├── align_variants.nf      ← MAFFT 정렬 + 변이표 생성 (유전자별)
+│   ├── gene_bin_depth.nf      ← 유전자별 read-length bin 분석
+│   ├── gene_multipanel_plot.nf← 멀티패널 플롯
+│   ├── gene_1x8_plot.nf       ← 1×8 유전자 플롯
+│   ├── af_dp_figures.nf       ← AF/DP 산점도 피규어
+│   ├── resistance_table.nf    ← 약제내성 마커 요약표
+│   └── fastq_qc.nf            ← FastQC 품질 관리
 │
 ├── bin/                     ← 헬퍼 스크립트 (Shell + Python + R)
 │   ├── call_bcftools.sh
 │   ├── call_ivar.sh
 │   ├── make_consensus_bcftools.sh
 │   ├── make_consensus_ivar.sh
-│   ├── splice_and_translate.py  ← CDS exon 추출 + 접합 + 번역 (Python)
-│   ├── gene_msa_variants.R      ← 유전자별 MSA + 변이표 생성 (R)
+│   ├── splice_and_translate.py    ← CDS exon 추출 + 접합 + 번역 (Python)
+│   ├── gene_msa_variants.R        ← 유전자별 MSA + 변이표 생성 (R)
+│   ├── collect_variants.R         ← 전체 샘플 VCF 병합 → variant_AF_all.tsv (R)
+│   ├── make_resistance_table.R    ← 약제내성 마커 요약표 생성 (R)
 │   ├── make_af_dp_figures.R
 │   ├── plot_depth_per_gene.R
 │   ├── plot_gene_multipanel.R
@@ -58,9 +62,11 @@ pf/
     ├── pf_depth/            ← 깊이 분석 결과
     ├── calling/ivar/        ← iVar 합의 서열 + 변이
     ├── calling/bcftools/    ← bcftools VCF + consensus FASTA
+    ├── calling/variant_AF_all.tsv ← 전체 샘플 병합 변이표
     ├── translation/         ← CDS 번역 + MAFFT 정렬 + 변이표
     ├── gene_bins/           ← 유전자별 bin 분석
     ├── figures/afdp/        ← AF/DP 피규어
+    ├── resistance/          ← 약제내성 마커 요약표
     └── pipeline_info/       ← Nextflow 실행 리포트
 ```
 
@@ -203,6 +209,7 @@ FASTQ 입력 (data/barcode*/*.fastq.gz)
 | **⑤ 변이 호출** | `do_variants: true` | bcftools로 SNP 호출 → VCF.gz 생성 + bcftools consensus |
 | **⑥ AF/DP 피규어** | `do_afdp: true` | 모든 유전자의 Allele Frequency vs Depth 산점도/히스토그램 생성 |
 | **⑦ CDS 번역·변이표** | `do_translate: false` | consensus에서 exon만 추출→접합→번역→MAFFT 정렬→변이표 생성 (아래 상세 참조) |
+| **⑧ 약제내성 마커표** | `do_resistance: false` | 전체 VCF를 병합 후 알려진 내성 SNP 위치만 추출하여 샘플×마커 요약표 생성 |
 
 ---
 
@@ -240,6 +247,7 @@ FASTQ 입력 (data/barcode*/*.fastq.gz)
 | `do_variants` | `true` | bcftools 변이 호출 |
 | `do_afdp` | `true` | AF/DP 피규어 생성 |
 | `do_translate` | `false` | CDS 번역·다중 정렬·변이표 생성 (⑦단계, mafft 필요) |
+| `do_resistance` | `false` | 알려진 약제내성 마커 요약표 생성 (⑧단계) |
 | `do_fastqc` | `false` | FastQC 품질 보고서 |
 | `do_multipanel` | `false` | 멀티패널 플롯 |
 | `do_gene_1x8` | `false` | 1×8 유전자 플롯 |
@@ -311,10 +319,135 @@ results/
 │   │   └── ...
 │   └── ...
 │
+├── resistance/
+│   └── resistance_markers.tsv         ← 샘플 × 마커 약제내성 요약표
+│
+├── calling/
+│   └── variant_AF_all.tsv             ← 전체 샘플 병합 변이표
+│
 └── pipeline_info/
     ├── report.html                    ← Nextflow 실행 리포트
     └── timeline.html                  ← 실행 시간 타임라인
 ```
+
+---
+
+## 💊 약제내성 마커 요약표 (`do_resistance`)
+
+`do_resistance: true`로 활성화하면 bcftools VCF 결과에서 알려진 약제내성 SNP 위치만 추출하여
+**샘플 × 마커**의 wide-format TSV를 자동 생성합니다.
+
+### 처리 흐름
+
+```
+CALL_VARIANTS → 샘플별/유전자별 .vcf.gz
+       ↓  (collect_variants.R)
+COLLECT_VARIANTS → calling/variant_AF_all.tsv  (전체 샘플 병합)
+       ↓  (make_resistance_table.R)
+RESISTANCE_TABLE → resistance/resistance_markers.tsv
+```
+
+### 출력 예시 (`resistance_markers.tsv`)
+
+| barcode | CRT_C72S | CRT_V73I | CRT_M74I | CRT_N75E | CRT_K76T | DHFR_S108N | K13_C580Y | … |
+|---------|----------|----------|----------|----------|----------|------------|-----------|---|
+| barcode01 | C | V | M | N | T(1.00) | N(0.99) | C | … |
+| barcode02 | C | V | I(0.95) | E(0.95) | T(1.00) | N(0.98) | Y(0.93) | … |
+| barcode03 | C | V | M | N | K | S(0.82) | C | … |
+
+- 레퍼런스(3D7)와 동일 → ref 아미노산 단일 문자 (예: `K`, `C`)
+- 명확한 변이 (AF ≥ 0.5) → `alt_aa(AF)` (예: `T(1.00)`, `Y(0.93)`)
+- 혼합 (0.2 ≤ AF < 0.5) → `ref/alt(AF)` (예: `K/T(0.35)`)
+- 노이즈 (AF < 0.2) → ref 아미노산
+
+### 수록 마커 목록
+
+#### CRT (PF3D7_0709000) — Chloroquine / Piperaquine
+
+참조 하플로타입 (3D7): **C**72-**V**73-**M**74-**N**75-**K**76 (CVMNK) → 내성: CVIET
+
+| 마커 | aa 위치 | ref → alt | 약제 | 비고 |
+|------|---------|-----------|------|---------|
+| CRT_C72S | 72 | C → S | CQ | 일부 동남아 분리주에서 보고 |
+| CRT_V73I | 73 | V → I | CQ | 드물게 보고 |
+| CRT_M74I | 74 | M → I | CQ | CVIET 하플로타입 |
+| CRT_N75E | 75 | N → E | CQ | CVIET 하플로타입 |
+| **CRT_K76T** | **76** | **K → T** | **CQ** | **핵심 CQ 내성 마커** |
+| CRT_A220S | 220 | A → S | CQ | 아프리카 내성 분리주 |
+| CRT_Q271E | 271 | Q → E | CQ | |
+| CRT_N326S | 326 | N → S | CQ | |
+| CRT_I356T | 356 | I → T | CQ | |
+| CRT_R371I | 371 | R → I | CQ | |
+
+#### DHFR (PF3D7_0417200) — Pyrimethamine
+
+| 마커 | aa 위치 | ref → alt | 약제 | 비고 |
+|------|---------|-----------|------|---------|
+| DHFR_N51I | 51 | N → I | PYR | 이중 변이 (51+108) |
+| DHFR_C59R | 59 | C → R | PYR | 삼중 변이 |
+| **DHFR_S108N** | **108** | **S → N** | **PYR** | **핵심 PYR 내성 마커** |
+| DHFR_I164L | 164 | I → L | PYR | 사중 변이 (고도내성) |
+
+#### DHPS (PF3D7_0810800) — Sulfadoxine
+
+| 마커 | aa 위치 | ref → alt | 약제 | 비고 |
+|------|---------|-----------|------|---------|
+| DHPS_S436A | 436 | S → A | SDX | |
+| **DHPS_A437G** | **437** | **A → G** | **SDX** | **핵심 SDX 내성 마커** |
+| DHPS_K540E | 540 | K → E | SDX | 삼중 변이 (434+437+540) |
+| DHPS_A581G | 581 | A → G | SDX | 오중 변이 (고도내성) |
+| DHPS_A613S | 613 | A → S | SDX | 오중 변이 |
+
+#### K13 (PF3D7_1343700) — Artemisinin
+
+WHO validated markers + candidate markers 포함
+
+| 마커 | aa 위치 | ref → alt | 약제 | 비고 |
+|------|---------|-----------|------|---------|
+| K13_F446I | 446 | F → I | ART | WHO validated |
+| K13_M476I | 476 | M → I | ART | WHO validated |
+| K13_Y493H | 493 | Y → H | ART | WHO validated |
+| K13_G533V | 533 | G → V | ART | WHO validated |
+| K13_R539T | 539 | R → T | ART | WHO validated |
+| K13_I543T | 543 | I → T | ART | WHO validated |
+| K13_P553L | 553 | P → L | ART | Candidate |
+| K13_R561H | 561 | R → H | ART | WHO validated (동남아 주요) |
+| K13_P574L | 574 | P → L | ART | Candidate |
+| **K13_C580Y** | **580** | **C → Y** | **ART** | **WHO validated (동아프리카 주요)** |
+| K13_A675V | 675 | A → V | ART | WHO validated |
+
+#### MDR1 (PF3D7_0523000) — Lumefantrine / Amodiaquine
+
+| 마커 | aa 위치 | ref → alt | 약제 | 비고 |
+|------|---------|-----------|------|---------|
+| **MDR1_N86Y** | **86** | **N → Y** | **LUM/AQ** | **lumefantrine 내성 관련** |
+| MDR1_Y184F | 184 | Y → F | LUM/AQ | |
+| MDR1_S1034C | 1034 | S → C | LUM/AQ | |
+| MDR1_N1042D | 1042 | N → D | LUM/AQ | |
+| MDR1_D1246Y | 1246 | D → Y | LUM/AQ | |
+
+### 실행 방법
+
+```bash
+# Variant calling과 함께 한 번에 실행
+nextflow run main.nf -profile standard \
+  --do_alignment false \
+  --do_variants true \
+  --do_resistance true
+
+# 기존 VCF 결과에서 resistance table만 추가 실행
+nextflow run main.nf -profile standard \
+  --do_alignment false \
+  --do_depth false \
+  --do_ivar false \
+  --do_gene_bins false \
+  --do_afdp false \
+  --do_variants false \
+  --do_resistance true
+```
+
+> `do_variants=false`이더라도 `results/calling/bcftools/` 폴더가 존재하면
+> 자동으로 기존 VCF를 읽어 `COLLECT_VARIANTS → RESISTANCE_TABLE`을 실행합니다.
 
 ---
 
