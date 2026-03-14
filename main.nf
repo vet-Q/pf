@@ -62,7 +62,7 @@ workflow {
     channel
       .fromPath("${params.bam_root}/${params.bam_glob}", checkIfExists: true)
       .ifEmpty { error "❌ No BAM files at: ${params.bam_root}/${params.bam_glob}" }
-      .map     { bam -> tuple(bam.getBaseName().replaceAll(/\.sorted$/, ""), bam) }
+      .map     { bam -> tuple(bam.name.replaceAll(/\..+$/, ""), bam) }
       .set { bam_ch }
   }
 
