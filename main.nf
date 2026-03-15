@@ -58,7 +58,7 @@ workflow {
       .groupTuple()
       .set { fastq_ch }
   } else if (params.do_depth || params.do_ivar || params.do_gene_bins || params.do_variants) {
-    // BAM 이 실제로 필요한 경우에만 로드
+    // BAM이 필요한 스텝: depth/ivar/gene_bins/variants
     channel
       .fromPath("${params.bam_root}/${params.bam_glob}", checkIfExists: true)
       .ifEmpty { error "❌ No BAM files at: ${params.bam_root}/${params.bam_glob}" }
@@ -133,7 +133,7 @@ workflow {
       params.bcftools_threads,
       params.max_depth
     )
-  }
+  } 
 
   // ==================== GENE MULTIPANEL PLOT ====================
   if (params.do_multipanel) {
@@ -241,7 +241,8 @@ workflow {
       COLLECT_VARIANTS.out.variants_tsv,
       cds_tsv_val,
       r_resistance,
-      params.afdp_af_threshold,
+      params.resistance_af_threshold,
+      params.resistance_dp_min,
       params.outdir
     )
   }

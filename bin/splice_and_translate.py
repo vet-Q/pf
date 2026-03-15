@@ -68,7 +68,7 @@ CODON_TABLE = {
     'GGT': 'G', 'GGC': 'G', 'GGA': 'G', 'GGG': 'G',
 }
 
-_RC = str.maketrans(
+_RC = str.maketrans( #문자를 상보적으로 바꿔주는 translation table, C레벨로 동작해 매우 빠름
     'ACGTacgtNnRrYyKkMmSsWwBbDdHhVv',
     'TGCAtgcaNnYyRrMmKkSsWwVvHhDdBb'
 )
@@ -88,7 +88,7 @@ IUPAC_BASES: dict = {
 # ── Sequence utilities ────────────────────────────────────────────────────────
 
 def rev_comp(seq: str) -> str:
-    return seq.translate(_RC)[::-1]
+    return seq.translate(_RC)[::-1] #역상보서열 만들기
 
 
 def translate(seq: str) -> str:
@@ -197,7 +197,7 @@ def splice_exons(seq: str, seq_start0: int, exons: list, strand: str) -> str:
                  corresponds to genomic coordinate seq_start0)
     seq_start0 : 0-based genomic coordinate of position 0 in *seq*
     exons      : list of exon dicts (already sorted by start ascending)
-    strand     : '+' or '-'
+    stand     : '+' or '-'
     """
     ordered = exons if strand == '+' else list(reversed(exons))
 

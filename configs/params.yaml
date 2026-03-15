@@ -52,6 +52,10 @@ afdp_af_threshold: 0.50
 afdp_shade_xmin: 0.48
 afdp_shade_xmax: 0.52
 
+# ==================== RESISTANCE TABLE PARAMETERS ====================
+resistance_af_threshold: 0.50  # AF >= 이 값 -> alt_aa 콜
+resistance_dp_min: 20          # DP < 이 값 -> lowcov 표시
+
 # ==================== COMPUTE RESOURCES ====================
 max_cpus: 32
 max_memory: "128.GB"
